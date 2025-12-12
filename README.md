@@ -81,20 +81,27 @@ Main Agent (coordinates orchestrators)
     |       +-- Task(model="opus") -> Repro Assessment
     |
     +-- [After Track 0 completes]
-        |
-        +-- Task(background) -> Track A Orchestrator (Opus)
-        |   +-- A1 (Opus) -> A2 (Opus/resume) -> A3 (Opus/resume) -> A4 (GPT/verify)
-        |
-        +-- Task(background) -> Track B Orchestrator (Opus)
-            +-- B1 (GPT) -> B2 (Opus) -> B3 (GPT) -> B4 (Opus/verify)
+    |   |
+    |   +-- Task(background) -> Track A Orchestrator (Opus)
+    |   |   +-- A1 (Opus) -> A2 (Opus/resume) -> A3 (Opus/resume) -> A4 (GPT/verify)
+    |   |
+    |   +-- Task(background) -> Track B Orchestrator (Opus)
+    |       +-- B1 (GPT) -> B2 (Opus) -> B3 (GPT) -> B4 (Opus/verify)
+    |
+    +-- [After Track A/B complete]
+    |   |
+    |   +-- Task() -> Judge Subagent (Opus, synchronous)
+    |           +-- Reads context, prompts, progress docs, diffs
+    |           +-- Scores both tracks, outputs verdict
+    |
+    +-- Apply winner fix, cleanup
 ```
 
 Models: **Opus 4.5** (all Claude) + **GPT 5.2** (all OpenAI)
 
 - **Track A**: Opus -> Opus (resume) -> Opus (resume) -> GPT (chained for token savings)
 - **Track B**: GPT -> Opus -> GPT -> Opus (true alternation: 2x each)
-
-"Fresh eyes" = different MODEL reviewing previous work, not just a new instance.
+- **Judge**: Opus compares both tracks, picks winner
 
 Each iteration follows: **Hypothesize -> Instrument -> Reproduce -> Analyze**
 
@@ -105,7 +112,8 @@ Flow:
 4. A1 (Opus) / B1 (GPT) generate hypotheses and attempt initial fix
 5. A2/A3 and B2/B3 can fix + verify; if verified, signal `READY_FOR_FIX` and exit early
 6. A4 (GPT) / B4 (Opus) final verification only if not verified earlier
-7. Main agent synthesizes findings from both tracks
+7. Judge (Opus) compares tracks, scores them, outputs verdict
+8. Main agent applies winner fix and cleans up
 
 ## Context Builder
 

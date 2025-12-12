@@ -24,16 +24,21 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
         |   │
         |   └── Task(background) -> Track B Orchestrator (Opus)
         |       └── B1 (GPT) -> B2 (Opus) -> B3 (GPT) -> B4 (Opus/verify)
+        |
+        ├── [After Track A/B complete]
+        |   |
+        |   └── Task() -> Judge Subagent (Opus, synchronous)
+        |           └── Compares tracks, picks winner, outputs verdict
+        |
+        └── Apply winner fix, cleanup
     ```
 
     - Track 0: Orchestrator runs Context Builder (GPT) then Repro Assessment (Opus)
     - Track A: Opus chain with resume (Opus -> Opus -> Opus -> GPT), saves tokens
     - Track B: True alternation (GPT -> Opus -> GPT -> Opus)
+    - Judge: Opus compares both tracks, picks winner (or COMPLEMENTARY if both needed)
     - All Claude models = Opus 4.5, all OpenAI models = GPT 5.2
     - Each iteration: Hypothesize -> Instrument -> Reproduce -> Analyze
-    - "Fresh eyes" = different MODEL reviewing previous work
-    - Iterations 1-3: Each subagent proposes AND attempts a fix
-    - Iteration 4: Final verification (only if not verified earlier)
     - Early exit: A2/A3 or B2/B3 can verify and signal READY_FOR_FIX to skip remaining iterations
     - Each track works in its own git worktree (no conflicts)
   </overview>
@@ -158,32 +163,37 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
       Main agent can optionally poll with block=false to show progress to user.
     </phase>
 
-    <phase name="5. SYNTHESIZE" agent="main">
-      When both tracks complete:
+    <phase name="5. JUDGE" agent="main">
+      Spawn Judge subagent to compare tracks and pick winner.
 
-      1. Read final progress docs:
-         - /tmp/debug-track-a-progress.md
-         - /tmp/debug-track-b-progress.md
+      ```
+      Task(
+        subagent_type="general-purpose",
+        model="opus",
+        prompt="{judge_subagent_prompt}",
+        run_in_background=false  # Wait for verdict
+      )
+      ```
 
-      2. Compare findings:
-         - Which hypotheses did Claude confirm/disprove?
-         - Which hypotheses did GPT confirm/disprove?
-         - Do they agree on root cause?
-         - Any complementary insights?
+      The Judge will:
+      1. Read context file: /tmp/debug-context.md
+      2. Read both progress docs
+      3. Compare fixes: `debug-mode diff track-a` and `debug-mode diff track-b`
+      4. Evaluate: evidence quality, fix simplicity, verification confidence
+      5. Output verdict: WINNER: track-a | WINNER: track-b | COMPLEMENTARY
 
-      3. Decide on fix strategy:
-         - Both agree: High confidence, proceed with shared root cause
-         - Disagree: Evaluate evidence quality, may be multiple issues
-         - Complementary: Combine insights for comprehensive fix
+      See <judge_subagent_prompt> for the prompt this subagent receives.
     </phase>
 
-    <phase name="6. FIX" agent="main">
-      Apply targeted fix based on synthesized findings:
+    <phase name="6. APPLY" agent="main">
+      Apply the winning fix based on Judge verdict:
 
-      - The fix MUST be justified by log evidence from at least one track
-      - Prefer 2-3 line fixes over large refactors
-      - Run reproduction to verify fix works
-      - Ask user to verify in their environment
+      ```bash
+      debug-mode apply <winning-track> /path/to/project
+      ```
+
+      If COMPLEMENTARY, apply both fixes in sequence (track-a first, then track-b).
+      Ask user to verify fix works in their environment.
     </phase>
 
     <phase name="7. CLEANUP" agent="main">
@@ -662,6 +672,77 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
     agent can decide whether to continue iterating or synthesize findings.
     ```
   </verification_subagent_prompt>
+
+  <judge_subagent_prompt>
+    Use this prompt for the Judge subagent that compares Track A and Track B.
+
+    ```
+    ## Judge Subagent
+
+    You are the Judge for debug mode. Both Track A and Track B have completed
+    their debugging iterations. Your job is to compare them and pick the winner.
+
+    ### Context Files to Read
+
+    1. Codebase context (from Context Builder):
+       ```bash
+       cat /tmp/debug-context.md
+       ```
+
+    2. Meta prompts used for iterations:
+       ```bash
+       cat /tmp/debug-track-a-prompt.md
+       cat /tmp/debug-track-b-prompt.md
+       ```
+
+    3. Progress documents (iteration results):
+       ```bash
+       cat /tmp/debug-track-a-progress.md
+       cat /tmp/debug-track-b-progress.md
+       ```
+
+    4. Code changes in each track:
+       ```bash
+       debug-mode diff track-a
+       debug-mode diff track-b
+       ```
+
+    ### Evaluation Criteria
+
+    Score each track on:
+    1. **Evidence Quality** (1-5): Is the fix backed by runtime evidence/logs?
+    2. **Fix Simplicity** (1-5): Minimal changes? No unnecessary refactoring?
+    3. **Verification Confidence** (1-5): Did reproduction pass? Tests pass?
+    4. **Root Cause Accuracy** (1-5): Does the fix address the actual root cause?
+
+    ### Output Format
+
+    ```
+    ## Track A Evaluation
+    - Evidence Quality: X/5 - {reasoning}
+    - Fix Simplicity: X/5 - {reasoning}
+    - Verification Confidence: X/5 - {reasoning}
+    - Root Cause Accuracy: X/5 - {reasoning}
+    - Total: XX/20
+
+    ## Track B Evaluation
+    - Evidence Quality: X/5 - {reasoning}
+    - Fix Simplicity: X/5 - {reasoning}
+    - Verification Confidence: X/5 - {reasoning}
+    - Root Cause Accuracy: X/5 - {reasoning}
+    - Total: XX/20
+
+    ## Verdict
+    WINNER: track-a | track-b | COMPLEMENTARY
+
+    ## Reasoning
+    {Why this track won, or why both are needed if COMPLEMENTARY}
+    ```
+
+    COMPLEMENTARY means both fixes address different aspects of the bug and
+    should be applied together. Only use this if truly necessary.
+    ```
+  </judge_subagent_prompt>
 
   <track_orchestrator_prompts>
     These prompts are given to the background subagents that manage each track.
