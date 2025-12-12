@@ -83,7 +83,7 @@ Main Agent (coordinates orchestrators)
     +-- [After Track 0 completes]
         |
         +-- Task(background) -> Track A Orchestrator (Opus)
-        |   +-- A1 (Opus) -> A2 (Opus) -> A3 (GPT) -> A4 (Opus/verify)
+        |   +-- A1 (Opus) -> A2 (Opus/resume) -> A3 (Opus/resume) -> A4 (GPT/verify)
         |
         +-- Task(background) -> Track B Orchestrator (Opus)
             +-- B1 (GPT) -> B2 (Opus) -> B3 (GPT) -> B4 (Opus/verify)
@@ -91,8 +91,8 @@ Main Agent (coordinates orchestrators)
 
 Models: **Opus 4.5** (all Claude) + **GPT 5.2** (all OpenAI)
 
-- **Track A**: Opus -> Opus -> GPT -> Opus (Opus-heavy: 3x Opus, 1x GPT)
-- **Track B**: GPT -> Opus -> GPT -> Opus (True alternation: 2x each)
+- **Track A**: Opus -> Opus (resume) -> Opus (resume) -> GPT (chained for token savings)
+- **Track B**: GPT -> Opus -> GPT -> Opus (true alternation: 2x each)
 
 "Fresh eyes" = different MODEL reviewing previous work, not just a new instance.
 
@@ -103,8 +103,8 @@ Flow:
 2. Context Builder searches codebase, bundles with repomix into `/tmp/debug-context.md`
 3. Repro Assessment establishes reproduction strategy (AUTO/SEMI_AUTO/MANUAL)
 4. A1 (Opus) / B1 (GPT) generate hypotheses and attempt initial fix
-5. A2 (Opus) / B2 (Opus) review - if good, signal `SKIP_TO_VERIFY`
-6. A4 / B4 perform final verification
+5. A2/A3 resume from previous Opus agent; B2/B3 alternate models
+6. A4 (GPT) / B4 (Opus) perform final verification with fresh model
 7. Main agent synthesizes findings from both tracks
 
 ## Context Builder

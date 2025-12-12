@@ -20,14 +20,14 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
         ├── [After Track 0 completes]
         |   |
         |   ├── Task(background) -> Track A Orchestrator (Opus)
-        |   │   └── A1 (Opus) -> A2 (Opus) -> A3 (GPT) -> A4 (Opus/verify)
+        |   │   └── A1 (Opus) -> A2 (Opus/resume) -> A3 (Opus/resume) -> A4 (GPT/verify)
         |   │
         |   └── Task(background) -> Track B Orchestrator (Opus)
         |       └── B1 (GPT) -> B2 (Opus) -> B3 (GPT) -> B4 (Opus/verify)
     ```
 
     - Track 0: Orchestrator runs Context Builder (GPT) then Repro Assessment (Opus)
-    - Track A: Opus-heavy (Opus -> Opus -> GPT -> Opus)
+    - Track A: Opus chain with resume (Opus -> Opus -> Opus -> GPT), saves tokens
     - Track B: True alternation (GPT -> Opus -> GPT -> Opus)
     - All Claude models = Opus 4.5, all OpenAI models = GPT 5.2
     - Each iteration: Hypothesize -> Instrument -> Reproduce -> Analyze
@@ -667,15 +667,16 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
     These prompts are given to the background subagents that manage each track.
     Note: Track 0 has already run - context and reproduction strategy are established.
 
-    ## Track A Orchestrator (Opus background, Opus-heavy pattern)
+    ## Track A Orchestrator (Opus background, chained with resume)
 
     You are the Track A orchestrator for debug mode. Your job is to manage:
-    - A1 (Opus 4.5): Fix iteration via Task(model="opus")
-    - A2 (Opus 4.5): Fix iteration via Task(model="opus")
-    - A3 (GPT 5.2): Fix iteration via Codex
-    - A4 (Opus 4.5): Final verification via Task(model="opus")
+    - A1 (Opus 4.5): Fix iteration via Task(model="opus") - NEW
+    - A2 (Opus 4.5): Fix iteration via Task(resume) - RESUME from A1
+    - A3 (Opus 4.5): Fix iteration via Task(resume) - RESUME from A2
+    - A4 (GPT 5.2): Final verification via Codex
 
-    Pattern: Opus -> Opus -> GPT -> Opus (3x Opus, 1x GPT)
+    Pattern: Opus -> Opus (resume) -> Opus (resume) -> GPT
+    Token optimization: A1-A3 share context via resume, GPT provides fresh eyes for verification.
 
     Worktree: /tmp/debug-track-a
     Progress Doc: /tmp/debug-track-a-progress.md
@@ -692,30 +693,29 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
     ITERATION 1 (Opus 4.5 - Fix Attempt):
     1. Spawn sub-subagent using Task(subagent_type="general-purpose", model="opus")
        with the prompt from meta_prompt_template
-    2. Wait for it to complete
+    2. Wait for it to complete - SAVE THE AGENT ID
     3. Read progress doc, check for signal
 
-    ITERATION 2 (Opus 4.5 - Fix Attempt):
-    1. Spawn sub-subagent using Task(subagent_type="general-purpose", model="opus")
-       with the prompt from meta_prompt_template
-    2. Wait for it to complete
+    ITERATION 2 (Opus 4.5 - Fix Attempt, RESUME from A1):
+    1. Resume using Task(resume=<agent_id>, prompt="Continue debugging iteration 2.
+       Read the progress doc for your previous findings and iterate on the fix.")
+    2. Wait for it to complete - SAVE THE AGENT ID
     3. Read progress doc, check for signal:
        - SKIP_TO_VERIFY: Jump to iteration 4
        - READY_FOR_FIX: Stop, track complete
        - CONTINUE/NEEDS_MORE_INFO: Proceed to iteration 3
 
-    ITERATION 3 (GPT 5.2 - Fix Attempt):
-    1. Write the prompt (from meta_prompt_template) to /tmp/debug-track-a-prompt.md
-    2. Launch codex: debug-mode codex run track-a 3 /tmp/debug-track-a-prompt.md
-    3. Poll until complete: debug-mode codex poll track-a
-    4. If FAILED, note error and continue
-    5. Read progress doc, check for signal
-
-    ITERATION 4 (Opus 4.5 - Final Verification):
-    1. Spawn sub-subagent using Task(subagent_type="general-purpose", model="opus")
-       with the prompt from verification_subagent_prompt
+    ITERATION 3 (Opus 4.5 - Fix Attempt, RESUME from A2):
+    1. Resume using Task(resume=<agent_id>, prompt="Continue debugging iteration 3.
+       Read the progress doc for your previous findings and iterate on the fix.")
     2. Wait for it to complete
-    3. Read progress doc for final signal
+    3. Read progress doc, check for signal
+
+    ITERATION 4 (GPT 5.2 - Final Verification):
+    1. Write the prompt (from verification_subagent_prompt) to /tmp/debug-track-a-prompt.md
+    2. Launch codex: debug-mode codex run track-a 4 /tmp/debug-track-a-prompt.md
+    3. Poll until complete: debug-mode codex poll track-a
+    4. Read progress doc for final signal
 
     When complete, summarize: fix applied, verification results, confidence level.
 
