@@ -50,7 +50,22 @@ export const PATHS = {
   TRACK_B_WORKTREE: "/tmp/debug-track-b",
   TRACK_A_PROGRESS: "/tmp/debug-track-a-progress.md",
   TRACK_B_PROGRESS: "/tmp/debug-track-b-progress.md",
+  CONTEXT_FILE: "/tmp/debug-context.md",
+  CONTEXT_PROMPT: "/tmp/debug-context-prompt.md",
+  CONTEXT_STATUS: "/tmp/debug-context.status",
+  CONTEXT_LOG: "/tmp/debug-context.log",
+  CONTEXT_OUTPUT: "/tmp/debug-context-out.txt",
+  CONTEXT_RUNNER: "/tmp/debug-context-runner.sh",
+  CONTEXT_SESSION: "debug-context-builder",
 } as const;
+
+export interface ContextRunResult {
+  session: string;
+  logFile: string;
+  outputFile: string;
+  statusFile: string;
+  contextFile: string;
+}
 
 export function getTrackPaths(track: Track) {
   const prefix = track === "track-a" ? "debug-track-a" : "debug-track-b";

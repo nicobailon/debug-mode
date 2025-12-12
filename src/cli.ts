@@ -1,6 +1,7 @@
 import { init } from "./commands/init.js";
 import { cleanup } from "./commands/cleanup.js";
 import { codex } from "./commands/codex.js";
+import { context } from "./commands/context.js";
 import { status } from "./commands/status.js";
 import { diff } from "./commands/diff.js";
 import { apply } from "./commands/apply.js";
@@ -13,6 +14,9 @@ Usage: debug-mode <command> [options]
 Commands:
   init <project-root>                        Initialize worktrees and progress docs
   cleanup <project-root>                     Complete cleanup of all artifacts
+  context run <prompt> <project-root>        Launch context builder (GPT 5.2 medium)
+  context poll                               Check context builder status
+  context read                               Output context.md contents
   codex run <track> <iteration> <prompt>     Run a Codex iteration for a track
   codex poll <track>                         Check Codex session status for a track
   status <track>                             Check progress doc for signals
@@ -23,8 +27,9 @@ Tracks: track-a, track-b
 
 Examples:
   debug-mode init /path/to/project
+  debug-mode context run /tmp/debug-context-prompt.md /path/to/project
+  debug-mode context poll
   debug-mode codex run track-a 2 /tmp/debug-track-a-prompt.md
-  debug-mode codex run track-b 1 /tmp/debug-track-b-prompt.md
   debug-mode codex poll track-b
   debug-mode status track-a
   debug-mode diff track-a
@@ -42,6 +47,9 @@ async function main(): Promise<void> {
       break;
     case "cleanup":
       await cleanup(args);
+      break;
+    case "context":
+      await context(args);
       break;
     case "codex":
       await codex(args);

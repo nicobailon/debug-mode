@@ -38,18 +38,18 @@ Creates isolated git worktrees and progress documents for both tracks.
 ### Run a Codex iteration
 
 ```bash
-debug-mode codex run 1 /tmp/track-b-prompt.md
+debug-mode codex run track-b 1 /tmp/debug-track-b-prompt.md
 ```
 
-Launches a Codex exec session in tmux for the specified iteration.
+Launches a Codex exec session in tmux for the specified track and iteration.
 
 ### Poll Codex status
 
 ```bash
-debug-mode codex poll
+debug-mode codex poll track-b
 ```
 
-Checks if the Codex session is still running.
+Checks if the Codex session is still running for a track.
 
 ### Check track progress
 
@@ -73,9 +73,11 @@ Branches are renamed to `archive/debug-track-{a|b}-{timestamp}` instead of being
 ## Architecture
 
 ```
-Main Agent
+Main Agent (minimal - passes bug description)
     |
-    +-- Track 0 (REPRO) - Claude establishes reproduction strategy
+    +-- Track 0 (Sequential)
+    |   +-- Step 1: Context Builder (GPT 5.2 medium) - searches codebase
+    |   +-- Step 2: Repro Assessment (Claude) - establishes reproduction
     |
     +-- [After Track 0 completes]
         |
@@ -92,12 +94,15 @@ Models alternate within each track:
 
 "Fresh eyes" = different MODEL reviewing previous work, not just a new instance.
 
+Each iteration follows: **Hypothesize -> Instrument -> Reproduce -> Analyze**
+
 Flow:
-1. Track 0 establishes reproduction strategy (AUTO/SEMI_AUTO/MANUAL)
-2. A1 (Claude) / B1 (GPT) attempt initial fix
-3. A2 (GPT) / B2 (Claude) review - if good, signal `SKIP_TO_VERIFY`
-4. A4 / B4 perform final verification
-5. Main agent synthesizes findings from both tracks
+1. Context Builder (GPT medium) searches codebase, outputs `/tmp/debug-context.md`
+2. Repro Assessment establishes reproduction strategy (AUTO/SEMI_AUTO/MANUAL)
+3. A1 (Claude) / B1 (GPT) generate hypotheses and attempt initial fix
+4. A2 (GPT) / B2 (Claude) review - if good, signal `SKIP_TO_VERIFY`
+5. A4 / B4 perform final verification
+6. Main agent synthesizes findings from both tracks
 
 ## CLI Commands
 
@@ -105,6 +110,9 @@ Flow:
 |---------|-------------|
 | `debug-mode init <project>` | Initialize worktrees and progress docs |
 | `debug-mode cleanup <project>` | Complete cleanup of all artifacts |
+| `debug-mode context run <prompt> <project>` | Launch context builder (GPT 5.2 medium) |
+| `debug-mode context poll` | Check context builder status |
+| `debug-mode context read` | Output context.md contents |
 | `debug-mode codex run <track> <n> <prompt>` | Run Codex iteration N for a track |
 | `debug-mode codex poll <track>` | Check Codex session status for a track |
 | `debug-mode status <track>` | Check progress doc for signals |

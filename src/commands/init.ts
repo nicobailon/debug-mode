@@ -27,30 +27,8 @@ export async function init(args: string[]): Promise<void> {
     await createDebugWorktrees(projectRoot);
 
     console.error("Creating progress documents...");
-    await createProgressDoc(
-      "track-a",
-      "{bug_description}",
-      [
-        "{hypothesis_1}",
-        "{hypothesis_2}",
-        "{hypothesis_3}",
-        "{hypothesis_4}",
-        "{hypothesis_5}",
-        "{hypothesis_6}",
-      ]
-    );
-    await createProgressDoc(
-      "track-b",
-      "{bug_description}",
-      [
-        "{hypothesis_1}",
-        "{hypothesis_2}",
-        "{hypothesis_3}",
-        "{hypothesis_4}",
-        "{hypothesis_5}",
-        "{hypothesis_6}",
-      ]
-    );
+    await createProgressDoc("track-a", "{bug_description}");
+    await createProgressDoc("track-b", "{bug_description}");
 
     const result: InitResult = {
       trackA: {

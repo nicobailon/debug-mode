@@ -7,8 +7,7 @@ export function getProgressDocPath(track: Track): string {
 
 export async function createProgressDoc(
   track: Track,
-  bugDescription: string,
-  hypotheses: string[]
+  bugDescription: string
 ): Promise<void> {
   const worktree =
     track === "track-a" ? PATHS.TRACK_A_WORKTREE : PATHS.TRACK_B_WORKTREE;
@@ -22,11 +21,11 @@ ${worktree}
 ## Bug Description
 ${bugDescription}
 
-## Hypotheses
-${hypotheses.map((h, i) => `${i + 1}. ${h}`).join("\n")}
+## Context
+See: ${PATHS.CONTEXT_FILE}
 
 ## Track 0 - Repro Assessment
-(To be filled by Track 0 subagent)
+(To be filled by Track 0 repro subagent)
 
 REPRO_MODE: pending
 REPRO_COMMAND: pending

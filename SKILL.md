@@ -11,9 +11,11 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
     Debug Mode uses hybrid dual-track parallel debugging with alternating models:
 
     ```
-    Main Agent
+    Main Agent (minimal - just passes bug description)
         |
-        ├── Track 0 (REPRO) - Claude establishes reproduction strategy
+        ├── Track 0 (Sequential)
+        │   ├── Step 1: Context Builder (GPT 5.2 medium) - gathers relevant files
+        │   └── Step 2: Repro Assessment (Claude) - establishes reproduction
         |
         ├── [After Track 0 completes]
         |   |
@@ -24,7 +26,9 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
         |       └── B1 (GPT) -> B2 (Claude) -> B3 (GPT) -> B4 (GPT/verify)
     ```
 
-    - Track 0 establishes reproduction strategy for both tracks
+    - Track 0 Step 1: Context Builder searches codebase, outputs /tmp/debug-context.md
+    - Track 0 Step 2: Repro establishes reproduction strategy for both tracks
+    - Each iteration includes: Hypothesize -> Instrument -> Reproduce -> Analyze
     - Models alternate within each track (Claude/GPT/Claude or GPT/Claude/GPT)
     - "Fresh eyes" = different MODEL, not just different instance
     - Iterations 1-3: Each subagent proposes AND attempts a fix
@@ -44,6 +48,9 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
 
     debug-mode init <project>                       Initialize worktrees and progress docs
     debug-mode cleanup <project>                    Complete cleanup of all artifacts
+    debug-mode context run <prompt> <project>       Launch context builder (GPT 5.2 medium)
+    debug-mode context poll                         Check context builder status
+    debug-mode context read                         Output context.md contents
     debug-mode codex run <track> <n> <file>         Run Codex iteration N for a track
     debug-mode codex poll <track>                   Check Codex session status for a track
     debug-mode status <track>                       Check progress doc for signals
@@ -60,28 +67,7 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
   </critical_rule>
 
   <workflow>
-    <phase name="1. HYPOTHESIZE" agent="main">
-      Generate 6+ distinct hypotheses about what could cause the bug.
-      These hypotheses are shared by BOTH tracks.
-
-      Requirements:
-      - Read relevant code to understand the execution flow
-      - List at least 6 different potential root causes
-      - Include both obvious causes and non-obvious edge cases
-      - Do NOT touch any code yet
-
-      Output format:
-      ```
-      Hypothesis 1: [Description]
-      Hypothesis 2: [Description]
-      Hypothesis 3: [Description]
-      Hypothesis 4: [Description]
-      Hypothesis 5: [Description]
-      Hypothesis 6: [Description]
-      ```
-    </phase>
-
-    <phase name="2. INITIALIZE WORKTREES AND PROGRESS DOCS" agent="main">
+    <phase name="1. INITIALIZE" agent="main">
       Use the CLI to create worktrees and progress docs:
 
       ```bash
@@ -92,15 +78,44 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
       - Worktrees: /tmp/debug-track-a, /tmp/debug-track-b
       - Progress docs: /tmp/debug-track-a-progress.md, /tmp/debug-track-b-progress.md
 
-      Then manually update the progress docs with the actual bug description,
-      reproduction command, and hypotheses from Phase 1.
-
+      Update the progress docs with the actual bug description.
       Each track works in its own worktree - no conflicts possible.
     </phase>
 
-    <phase name="3. REPRO ASSESSMENT (Track 0)" agent="main">
-      Before spawning debug tracks, establish a reproduction strategy.
-      This is a SINGLE subagent that runs synchronously (not in background).
+    <phase name="2. TRACK 0 - CONTEXT BUILDER" agent="main">
+      First step of Track 0: Context Builder (GPT 5.2 medium via Codex).
+      This gathers all relevant files for the debugging session.
+
+      1. Write the context builder prompt to /tmp/debug-context-prompt.md:
+         - Include the bug description
+         - Include the project root path
+
+      2. Launch the context builder:
+         ```bash
+         debug-mode context run /tmp/debug-context-prompt.md /path/to/project
+         ```
+
+      3. Poll until complete:
+         ```bash
+         debug-mode context poll
+         ```
+
+      4. Read the context file:
+         ```bash
+         debug-mode context read
+         ```
+
+      Output: /tmp/debug-context.md with:
+      - Relevant file paths and line ranges
+      - Key code snippets
+      - Context blocks for repro subagent and debug iterations
+
+      See <context_builder_prompt> for the prompt this subagent receives.
+    </phase>
+
+    <phase name="3. TRACK 0 - REPRO ASSESSMENT" agent="main">
+      Second step of Track 0: Repro Assessment (Claude).
+      Establishes reproduction strategy using the context from Step 2.
 
       ```
       Task(
@@ -225,7 +240,7 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
 
   <meta_prompt_template>
     Use this template for subagents 1-3 in either track (NOT for subagent 4 - see verification_subagent_prompt).
-    These subagents iterate toward a fix: analyze, attempt fix, verify, repeat.
+    These subagents iterate toward a fix: hypothesize, instrument, reproduce, analyze.
 
     ```
     ## Debug Track {A|B} - Subagent {N}
@@ -233,8 +248,9 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
     ### Bug Description
     {original_bug_description}
 
-    ### Hypotheses (shared across both tracks)
-    {all_hypotheses_with_current_status}
+    ### Context
+    Read the context file for relevant files and code snippets:
+    Path: /tmp/debug-context.md
 
     ### Your Worktree (IMPORTANT)
     Path: {/tmp/debug-track-a or /tmp/debug-track-b}
@@ -255,12 +271,19 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
     You are Subagent {N}. You are a DIFFERENT MODEL than the previous subagent.
     Your job is to review their work with "fresh eyes" and iterate toward a fix.
 
-    1. READ PROGRESS DOC
+    Follow this flow: HYPOTHESIZE -> INSTRUMENT -> REPRODUCE -> ANALYZE
+
+    1. READ CONTEXT AND PROGRESS DOC
+       - Read /tmp/debug-context.md for relevant files
        - Track 0's REPRO_MODE and REPRO_COMMAND
        - Previous fix attempts and their results
        - What's been confirmed/disproved
 
-    2. FRESH EYES REVIEW (Critical Step)
+    2. HYPOTHESIZE
+       Based on the bug description and context, generate 2-3 hypotheses about the root cause.
+       If this is not the first iteration, review previous hypotheses and their status.
+
+    3. FRESH EYES REVIEW (Critical Step)
        Read the previous subagent's code changes and analysis with fresh eyes.
        Look carefully for:
        - Obvious bugs or errors in their fix
@@ -273,33 +296,33 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
        You are a different model - use that to your advantage. Question everything.
        Don't assume the previous fix is correct just because it was attempted.
 
-    3. ANALYZE current state
-       - If previous fix works AND passes your review → consider SKIP_TO_VERIFY
-       - If previous fix has issues → understand why, plan correction
-       - If no fix yet → identify root cause from logs/code
+    4. ANALYZE current state
+       - If previous fix works AND passes your review -> consider SKIP_TO_VERIFY
+       - If previous fix has issues -> understand why, plan correction
+       - If no fix yet -> identify root cause from logs/code
 
-    4. INSTRUMENT (if needed)
+    5. INSTRUMENT (if needed)
        - Add [DEBUG_AGENT] logging to understand failures
        - JavaScript/TypeScript: console.log('[DEBUG_AGENT] ...')
        - Python: print('[DEBUG_AGENT] ...')
        - Skip if you have enough information to attempt fix
 
-    5. PROPOSE FIX
-       - State your hypothesis for the root cause
+    6. PROPOSE FIX
+       - State which hypothesis you're testing
        - Describe the fix you will make
        - Explain why this should work
 
-    6. ATTEMPT FIX
+    7. ATTEMPT FIX
        - Make the code change in your worktree
        - Keep fixes minimal and targeted (prefer 2-3 line fixes)
        - Do NOT remove [DEBUG_AGENT] logging
 
-    7. VERIFY
+    8. REPRODUCE AND VERIFY
        - Run REPRO_COMMAND - does the bug still occur?
        - Run tests if available - do they pass?
        - Document the results
 
-    8. UPDATE PROGRESS DOC
+    9. UPDATE PROGRESS DOC
        ```markdown
        ## Iteration {N}
 
@@ -343,18 +366,104 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
     ```
   </meta_prompt_template>
 
-  <repro_subagent_prompt>
-    Use this prompt for Track 0 - the single repro assessment subagent that
-    runs BEFORE both debug tracks. It establishes reproduction strategy for
-    BOTH Track A and Track B.
+  <context_builder_prompt>
+    Use this prompt for the Context Builder (GPT 5.2 medium) - the first step in Track 0.
+    It searches the codebase to find all relevant files for debugging.
 
     ```
-    ## Track 0: Repro Assessment Subagent
+    ## Track 0 Step 1: Context Builder
+
+    Your task is to search the codebase and gather ALL relevant files for debugging this bug.
+    You are running with GPT 5.2 medium reasoning.
+
+    ### Bug Description
+    {bug_description}
+
+    ### Project Root
+    {project_root}
+
+    ### Your Task
+
+    1. SEARCH the codebase to find files relevant to this bug:
+       - Files likely to contain the bug
+       - Files that interact with the buggy code
+       - Test files related to the affected functionality
+       - Config files that might influence behavior
+       - Entry points and call chains
+
+    2. Use your tools:
+       - Grep for error messages, function names, keywords from bug description
+       - Glob to find related files by pattern
+       - Read to examine promising files
+
+    3. Optional: If `npx repomix` is available, you can use it to bundle files:
+       ```bash
+       npx repomix --include "file1.ts,file2.ts" --output /tmp/debug-context.md
+       ```
+
+    4. WRITE the context file to /tmp/debug-context.md with this format:
+
+       ```markdown
+       # Debug Context
+
+       ## Bug Description
+       {bug_description}
+
+       ## Relevant Files
+       | File | Lines | Relevance |
+       |------|-------|-----------|
+       | src/auth.ts | 45-120 | Main authentication logic |
+       | src/utils/token.ts | 10-50 | Token validation |
+       | tests/auth.test.ts | 100-150 | Related test cases |
+
+       ## Key Code Snippets
+
+       ### src/auth.ts:45-80
+       ```typescript
+       // Paste the actual code here
+       ```
+
+       ### src/utils/token.ts:10-30
+       ```typescript
+       // Paste the actual code here
+       ```
+
+       ## Context for Repro Subagent
+       Based on the code, here are observations for establishing reproduction:
+       - Entry point: {describe how the bug is triggered}
+       - Dependencies: {any external services, databases, etc.}
+       - Test commands: {existing test commands that might be relevant}
+
+       ## Context for Debug Iterations
+       Key areas to investigate:
+       - {area 1 and why}
+       - {area 2 and why}
+       - {area 3 and why}
+       ```
+
+    IMPORTANT: Be thorough. The subsequent subagents will rely on this context
+    to debug efficiently. Include enough code snippets that they can understand
+    the flow without having to search extensively themselves.
+    ```
+  </context_builder_prompt>
+
+  <repro_subagent_prompt>
+    Use this prompt for Track 0 Step 2 - the repro assessment subagent that
+    establishes reproduction strategy for BOTH Track A and Track B.
+
+    ```
+    ## Track 0 Step 2: Repro Assessment Subagent
 
     Your SOLE task is to establish a reproduction strategy for this bug.
     Do NOT add instrumentation. Do NOT attempt to fix. Just establish repro.
 
     This repro strategy will be used by BOTH Track A (Claude) and Track B (GPT 5.2).
+
+    ### Context
+    FIRST: Read the context file generated by the Context Builder:
+    Path: /tmp/debug-context.md
+
+    This contains relevant files, code snippets, and observations about the bug.
 
     ### Worktrees
     - Track A: /tmp/debug-track-a
@@ -369,7 +478,10 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
 
     ### Steps
 
-    1. READ the bug description and hypotheses from either progress doc
+    1. READ the context file (/tmp/debug-context.md) for:
+       - Relevant files and code snippets
+       - Observations about entry points and dependencies
+       - Suggested test commands
 
     2. ASSESS reproducibility - determine which mode applies:
        - CLI-reproducible: Can be triggered via command (npm test, curl, script)
@@ -500,7 +612,7 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
 
   <track_orchestrator_prompts>
     These prompts are given to the background subagents that manage each track.
-    Note: Track 0 (repro assessment) has already run - reproduction strategy is established.
+    Note: Track 0 has already run - context and reproduction strategy are established.
 
     ## Track A Orchestrator (Claude background, alternating models)
 
@@ -512,9 +624,13 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
 
     Worktree: /tmp/debug-track-a
     Progress Doc: /tmp/debug-track-a-progress.md
+    Context File: /tmp/debug-context.md
 
-    IMPORTANT: Read the progress doc FIRST to see the REPRO_MODE and REPRO_COMMAND
-    established by Track 0.
+    IMPORTANT: Read the context file and progress doc FIRST to see:
+    - Relevant files and code snippets from Context Builder
+    - REPRO_MODE and REPRO_COMMAND from Track 0
+
+    Each iteration follows: Hypothesize -> Instrument -> Reproduce -> Analyze
 
     Your Task:
 
@@ -558,9 +674,13 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
 
     Worktree: /tmp/debug-track-b
     Progress Doc: /tmp/debug-track-b-progress.md
+    Context File: /tmp/debug-context.md
 
-    IMPORTANT: Read the progress doc FIRST to see the REPRO_MODE and REPRO_COMMAND
-    established by Track 0.
+    IMPORTANT: Read the context file and progress doc FIRST to see:
+    - Relevant files and code snippets from Context Builder
+    - REPRO_MODE and REPRO_COMMAND from Track 0
+
+    Each iteration follows: Hypothesize -> Instrument -> Reproduce -> Analyze
 
     Your Task:
 

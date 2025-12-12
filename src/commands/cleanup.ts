@@ -52,6 +52,12 @@ export async function cleanup(args: string[]): Promise<void> {
     const tempFiles: string[] = [
       PATHS.TRACK_A_PROGRESS,
       PATHS.TRACK_B_PROGRESS,
+      PATHS.CONTEXT_FILE,
+      PATHS.CONTEXT_PROMPT,
+      PATHS.CONTEXT_STATUS,
+      PATHS.CONTEXT_LOG,
+      PATHS.CONTEXT_OUTPUT,
+      PATHS.CONTEXT_RUNNER,
       trackAPaths.prompt,
       trackAPaths.status,
       trackAPaths.runner,
