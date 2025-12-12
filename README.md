@@ -1,6 +1,6 @@
 # Debug Mode
 
-Hypothesis-driven debugging with hybrid dual-track parallel execution (Claude + GPT 5.2).
+Hypothesis-driven debugging with hybrid dual-track parallel execution (Opus 4.5 + GPT 5.2).
 
 When standard debugging fails, Debug Mode spawns two independent AI tracks that work in parallel - each reviewing and improving upon its own previous work. The main agent then synthesizes findings from both tracks for high-confidence fixes.
 
@@ -74,36 +74,38 @@ Branches are renamed to `archive/debug-track-{a|b}-{timestamp}` instead of being
 ## Architecture
 
 ```
-Main Agent (minimal - passes bug description)
+Main Agent (coordinates orchestrators)
     |
-    +-- Track 0 (Sequential)
-    |   +-- Step 1: Context Builder (GPT 5.2 medium) - searches codebase
-    |   +-- Step 2: Repro Assessment (Claude) - establishes reproduction
+    +-- Task() -> Track 0 Orchestrator (Opus, synchronous)
+    |       +-- debug-mode context run (GPT 5.2 medium)
+    |       +-- Task(model="opus") -> Repro Assessment
     |
     +-- [After Track 0 completes]
         |
-        +-- Track A Orchestrator (Claude background)
-        |   +-- A1 (Claude) -> A2 (GPT) -> A3 (Claude) -> A4 (Claude/verify)
+        +-- Task(background) -> Track A Orchestrator (Opus)
+        |   +-- A1 (Opus) -> A2 (Opus) -> A3 (GPT) -> A4 (Opus/verify)
         |
-        +-- Track B Orchestrator (Claude background)
-            +-- B1 (GPT) -> B2 (Claude) -> B3 (GPT) -> B4 (GPT/verify)
+        +-- Task(background) -> Track B Orchestrator (Opus)
+            +-- B1 (GPT) -> B2 (Opus) -> B3 (GPT) -> B4 (Opus/verify)
 ```
 
-Models alternate within each track:
-- **Track A**: Claude -> GPT -> Claude -> Claude (verify)
-- **Track B**: GPT -> Claude -> GPT -> GPT (verify)
+Models: **Opus 4.5** (all Claude) + **GPT 5.2** (all OpenAI)
+
+- **Track A**: Opus -> Opus -> GPT -> Opus (Opus-heavy: 3x Opus, 1x GPT)
+- **Track B**: GPT -> Opus -> GPT -> Opus (True alternation: 2x each)
 
 "Fresh eyes" = different MODEL reviewing previous work, not just a new instance.
 
 Each iteration follows: **Hypothesize -> Instrument -> Reproduce -> Analyze**
 
 Flow:
-1. Context Builder (GPT medium) searches codebase, outputs `/tmp/debug-context.md`
-2. Repro Assessment establishes reproduction strategy (AUTO/SEMI_AUTO/MANUAL)
-3. A1 (Claude) / B1 (GPT) generate hypotheses and attempt initial fix
-4. A2 (GPT) / B2 (Claude) review - if good, signal `SKIP_TO_VERIFY`
-5. A4 / B4 perform final verification
-6. Main agent synthesizes findings from both tracks
+1. Track 0 Orchestrator runs Context Builder (GPT) then Repro Assessment (Opus)
+2. Context Builder searches codebase, bundles with repomix into `/tmp/debug-context.md`
+3. Repro Assessment establishes reproduction strategy (AUTO/SEMI_AUTO/MANUAL)
+4. A1 (Opus) / B1 (GPT) generate hypotheses and attempt initial fix
+5. A2 (Opus) / B2 (Opus) review - if good, signal `SKIP_TO_VERIFY`
+6. A4 / B4 perform final verification
+7. Main agent synthesizes findings from both tracks
 
 ## Context Builder
 
@@ -120,7 +122,7 @@ The bundled context file provides all subsequent subagents with full file conten
 
 ## Repro Modes
 
-Track 0, Step 2 determines how the bug can be reproduced:
+Track 0 Repro Assessment (Opus sub-subagent) determines how the bug can be reproduced:
 
 | Mode | Description |
 |------|-------------|

@@ -1,6 +1,6 @@
 ---
 name: debug-mode
-description: Hypothesis-driven debugging with hybrid dual-track parallel execution (Claude + GPT 5.2). Spawns two independent chains of subagents where each reviews and improves upon its own previous work, then synthesizes findings from both tracks. Use when debugging hard-to-reproduce bugs, CI/E2E test failures, flaky tests, or when standard fixes have failed.
+description: Hypothesis-driven debugging with hybrid dual-track parallel execution (Opus 4.5 + GPT 5.2). Spawns two independent chains of subagents where each reviews and improves upon its own previous work, then synthesizes findings from both tracks. Use when debugging hard-to-reproduce bugs, CI/E2E test failures, flaky tests, or when standard fixes have failed.
 ---
 
 <debug_mode_skill>
@@ -8,29 +8,30 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
   <primary_goal>Fix bugs through runtime evidence using parallel AI perspectives</primary_goal>
 
   <overview>
-    Debug Mode uses hybrid dual-track parallel debugging with alternating models:
+    Debug Mode uses hybrid dual-track parallel debugging with Opus 4.5 and GPT 5.2:
 
     ```
-    Main Agent (minimal - just passes bug description)
+    Main Agent (minimal - coordinates orchestrators)
         |
-        ├── Track 0 (Sequential)
-        │   ├── Step 1: Context Builder (GPT 5.2 medium) - gathers relevant files
-        │   └── Step 2: Repro Assessment (Claude) - establishes reproduction
+        ├── Task() -> Track 0 Orchestrator (Opus, synchronous)
+        │       ├── debug-mode context run (GPT 5.2 medium)
+        │       └── Task(model="opus") -> Repro Assessment
         |
         ├── [After Track 0 completes]
         |   |
-        |   ├── Track A Orchestrator (Claude background)
-        |   │   └── A1 (Claude) -> A2 (GPT) -> A3 (Claude) -> A4 (Claude/verify)
+        |   ├── Task(background) -> Track A Orchestrator (Opus)
+        |   │   └── A1 (Opus) -> A2 (Opus) -> A3 (GPT) -> A4 (Opus/verify)
         |   │
-        |   └── Track B Orchestrator (Claude background)
-        |       └── B1 (GPT) -> B2 (Claude) -> B3 (GPT) -> B4 (GPT/verify)
+        |   └── Task(background) -> Track B Orchestrator (Opus)
+        |       └── B1 (GPT) -> B2 (Opus) -> B3 (GPT) -> B4 (Opus/verify)
     ```
 
-    - Track 0 Step 1: Context Builder searches codebase, outputs /tmp/debug-context.md
-    - Track 0 Step 2: Repro establishes reproduction strategy for both tracks
-    - Each iteration includes: Hypothesize -> Instrument -> Reproduce -> Analyze
-    - Models alternate within each track (Claude/GPT/Claude or GPT/Claude/GPT)
-    - "Fresh eyes" = different MODEL, not just different instance
+    - Track 0: Orchestrator runs Context Builder (GPT) then Repro Assessment (Opus)
+    - Track A: Opus-heavy (Opus -> Opus -> GPT -> Opus)
+    - Track B: True alternation (GPT -> Opus -> GPT -> Opus)
+    - All Claude models = Opus 4.5, all OpenAI models = GPT 5.2
+    - Each iteration: Hypothesize -> Instrument -> Reproduce -> Analyze
+    - "Fresh eyes" = different MODEL reviewing previous work
     - Iterations 1-3: Each subagent proposes AND attempts a fix
     - Iteration 4: Final verification only (no new fixes)
     - SKIP_TO_VERIFY: If iteration 2 approves fix, skip iteration 3
@@ -82,90 +83,62 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
       Each track works in its own worktree - no conflicts possible.
     </phase>
 
-    <phase name="2. TRACK 0 - CONTEXT BUILDER" agent="main">
-      First step of Track 0: Context Builder (GPT 5.2 medium via Codex).
-      This gathers all relevant files for the debugging session.
-
-      1. Write the context builder prompt to /tmp/debug-context-prompt.md:
-         - Include the bug description
-         - Include the project root path
-
-      2. Launch the context builder:
-         ```bash
-         debug-mode context run /tmp/debug-context-prompt.md /path/to/project
-         ```
-
-      3. Poll until complete:
-         ```bash
-         debug-mode context poll
-         ```
-
-      4. Read the context file:
-         ```bash
-         debug-mode context read
-         ```
-
-      Output: /tmp/debug-context.md with:
-      - Relevant file paths and line ranges
-      - Key code snippets
-      - Context blocks for repro subagent and debug iterations
-
-      See <context_builder_prompt> for the prompt this subagent receives.
-    </phase>
-
-    <phase name="3. TRACK 0 - REPRO ASSESSMENT" agent="main">
-      Second step of Track 0: Repro Assessment (Claude).
-      Establishes reproduction strategy using the context from Step 2.
+    <phase name="2. TRACK 0 (Context + Repro)" agent="main">
+      Spawn Track 0 Orchestrator to gather context and establish reproduction.
+      This runs synchronously - main agent waits for completion.
 
       ```
       Task(
         subagent_type="general-purpose",
-        prompt="{repro_subagent_prompt}",
+        model="opus",
+        prompt="{track_0_orchestrator_prompt}",
         run_in_background=false  # Wait for completion
       )
       ```
 
-      Track 0 determines:
-      - REPRO_MODE: AUTO (script), SEMI_AUTO (browser), or MANUAL (user triggers)
-      - If AUTO: writes debug-repro.{js|py|sh} to BOTH worktrees
-      - Updates BOTH progress docs with repro strategy
+      Track 0 Orchestrator performs:
+      1. Context Builder (GPT 5.2 medium via Codex) - gathers relevant files
+      2. Repro Assessment (Opus sub-subagent) - establishes reproduction strategy
 
-      After Track 0 completes, both Track A and B will use the established
-      reproduction strategy. If Track 0 cannot establish AUTO repro, it
-      documents MANUAL mode and both tracks proceed with user-triggered repro.
+      Outputs:
+      - /tmp/debug-context.md with relevant code and analysis
+      - REPRO_MODE in both progress docs (AUTO/SEMI_AUTO/MANUAL)
+      - debug-repro.{js|py|sh} in both worktrees (if AUTO mode)
 
-      See <repro_subagent_prompt> for the prompt this subagent receives.
+      See <track_0_orchestrator_prompt> for the prompt this orchestrator receives.
     </phase>
 
-    <phase name="4. SPAWN PARALLEL DEBUG TRACKS" agent="main">
+    <phase name="3. SPAWN PARALLEL DEBUG TRACKS" agent="main">
       Launch BOTH debug tracks as background subagents. Each subagent manages
       its own iteration loop independently. Main agent waits for both to complete.
 
-      Track A (Claude subagent):
+      Track A Orchestrator (Opus, manages Opus/GPT iterations):
       ```
       Task(
         subagent_type="general-purpose",
+        model="opus",
         prompt="{track_a_orchestrator_prompt}",
         run_in_background=true
       )
       ```
 
-      Track B (Claude subagent managing Codex/GPT 5.2):
+      Track B Orchestrator (Opus, manages GPT/Opus iterations):
       ```
       Task(
         subagent_type="general-purpose",
+        model="opus",
         prompt="{track_b_orchestrator_prompt}",
         run_in_background=true
       )
       ```
 
-      Both tracks start with the repro strategy already established by Track 0.
-      They focus purely on debugging: instrument, reproduce, analyze.
+      Both tracks start with context and repro strategy from Track 0.
+      They focus purely on debugging: hypothesize, instrument, reproduce, analyze.
 
-      See <track_orchestrator_prompts> for the prompts each subagent receives.
+      See <track_orchestrator_prompts> for the prompts each orchestrator receives.
     </phase>
 
-    <phase name="5. WAIT FOR COMPLETION" agent="main">
+    <phase name="4. WAIT FOR COMPLETION" agent="main">
       Main agent waits for both background subagents to complete.
       Each subagent handles its own iteration loop internally.
 
@@ -185,7 +158,7 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
       Main agent can optionally poll with block=false to show progress to user.
     </phase>
 
-    <phase name="6. SYNTHESIZE" agent="main">
+    <phase name="5. SYNTHESIZE" agent="main">
       When both tracks complete:
 
       1. Read final progress docs:
@@ -204,7 +177,7 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
          - Complementary: Combine insights for comprehensive fix
     </phase>
 
-    <phase name="7. FIX" agent="main">
+    <phase name="6. FIX" agent="main">
       Apply targeted fix based on synthesized findings:
 
       - The fix MUST be justified by log evidence from at least one track
@@ -213,7 +186,7 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
       - Ask user to verify in their environment
     </phase>
 
-    <phase name="8. CLEANUP" agent="main">
+    <phase name="7. CLEANUP" agent="main">
       After user confirms fix works:
 
       1. Apply the fix to main worktree (if developed in a track worktree):
@@ -532,6 +505,84 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
     ```
   </repro_subagent_prompt>
 
+  <track_0_orchestrator_prompt>
+    Use this prompt for the Track 0 Orchestrator - runs synchronously before Track A/B.
+    It coordinates Context Builder (GPT 5.2) and Repro Assessment (Opus sub-subagent).
+
+    ```
+    ## Track 0 Orchestrator
+
+    You are the Track 0 Orchestrator. Your job is to:
+    1. Run the Context Builder (GPT 5.2 medium via Codex)
+    2. Spawn the Repro Assessment sub-subagent (Opus)
+
+    ### Bug Description
+    {bug_description}
+
+    ### Project Root
+    {project_root}
+
+    ### Worktrees
+    - Track A: /tmp/debug-track-a
+    - Track B: /tmp/debug-track-b
+
+    ### Progress Docs
+    - Track A: /tmp/debug-track-a-progress.md
+    - Track B: /tmp/debug-track-b-progress.md
+
+    ### Step 1: Context Builder (GPT 5.2 medium)
+
+    Write the context builder prompt to /tmp/debug-context-prompt.md, then launch:
+
+    ```bash
+    debug-mode context run /tmp/debug-context-prompt.md {project_root}
+    ```
+
+    Poll until complete:
+    ```bash
+    debug-mode context poll
+    ```
+
+    The Context Builder will:
+    - Search the codebase for relevant files
+    - Bundle them with repomix into /tmp/debug-context.md
+    - Add analysis summary for subsequent subagents
+
+    See <context_builder_prompt> for the prompt to write.
+
+    ### Step 2: Repro Assessment (Opus sub-subagent)
+
+    After Context Builder completes, spawn the Repro Assessment:
+
+    ```
+    Task(
+      subagent_type="general-purpose",
+      model="opus",
+      prompt="{repro_subagent_prompt}",
+      run_in_background=false
+    )
+    ```
+
+    The Repro Assessment will:
+    - Read the context file
+    - Determine REPRO_MODE (AUTO/SEMI_AUTO/MANUAL)
+    - Write repro scripts to both worktrees (if AUTO)
+    - Update both progress docs
+
+    See <repro_subagent_prompt> for the prompt this sub-subagent receives.
+
+    ### Completion
+
+    When both steps complete, summarize:
+    - Context file location: /tmp/debug-context.md
+    - REPRO_MODE determined
+    - REPRO_COMMAND (if AUTO)
+    - Any issues encountered
+
+    Track A and Track B orchestrators will use this context and repro strategy.
+    ```
+  </track_0_orchestrator_prompt>
+
   <verification_subagent_prompt>
     Use this prompt for Subagent 4 (final verification) in either track.
     This subagent does NOT propose new fixes - it only verifies the existing fix.
@@ -616,13 +667,15 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
     These prompts are given to the background subagents that manage each track.
     Note: Track 0 has already run - context and reproduction strategy are established.
 
-    ## Track A Orchestrator (Claude background, alternating models)
+    ## Track A Orchestrator (Opus background, Opus-heavy pattern)
 
     You are the Track A orchestrator for debug mode. Your job is to manage:
-    - A1 (Claude): Fix iteration via Task
-    - A2 (GPT 5.2): Fix iteration via Codex
-    - A3 (Claude): Fix iteration via Task
-    - A4 (Claude): Final verification via Task
+    - A1 (Opus 4.5): Fix iteration via Task(model="opus")
+    - A2 (Opus 4.5): Fix iteration via Task(model="opus")
+    - A3 (GPT 5.2): Fix iteration via Codex
+    - A4 (Opus 4.5): Final verification via Task(model="opus")
+
+    Pattern: Opus -> Opus -> GPT -> Opus (3x Opus, 1x GPT)
 
     Worktree: /tmp/debug-track-a
     Progress Doc: /tmp/debug-track-a-progress.md
@@ -636,43 +689,45 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
 
     Your Task:
 
-    ITERATION 1 (Claude - Fix Attempt):
-    1. Spawn sub-subagent using Task(subagent_type="general-purpose")
+    ITERATION 1 (Opus 4.5 - Fix Attempt):
+    1. Spawn sub-subagent using Task(subagent_type="general-purpose", model="opus")
        with the prompt from meta_prompt_template
     2. Wait for it to complete
     3. Read progress doc, check for signal
 
-    ITERATION 2 (GPT 5.2 - Fix Attempt):
-    1. Write the prompt (from meta_prompt_template) to /tmp/debug-track-a-prompt.md
-    2. Launch codex: debug-mode codex run track-a 2 /tmp/debug-track-a-prompt.md
-    3. Poll until complete: debug-mode codex poll track-a
-    4. If FAILED, note error and continue
-    5. Read progress doc, check for signal:
+    ITERATION 2 (Opus 4.5 - Fix Attempt):
+    1. Spawn sub-subagent using Task(subagent_type="general-purpose", model="opus")
+       with the prompt from meta_prompt_template
+    2. Wait for it to complete
+    3. Read progress doc, check for signal:
        - SKIP_TO_VERIFY: Jump to iteration 4
        - READY_FOR_FIX: Stop, track complete
        - CONTINUE/NEEDS_MORE_INFO: Proceed to iteration 3
 
-    ITERATION 3 (Claude - Fix Attempt):
-    1. Spawn sub-subagent using Task(subagent_type="general-purpose")
-       with the prompt from meta_prompt_template
-    2. Wait for it to complete
-    3. Read progress doc, check for signal
+    ITERATION 3 (GPT 5.2 - Fix Attempt):
+    1. Write the prompt (from meta_prompt_template) to /tmp/debug-track-a-prompt.md
+    2. Launch codex: debug-mode codex run track-a 3 /tmp/debug-track-a-prompt.md
+    3. Poll until complete: debug-mode codex poll track-a
+    4. If FAILED, note error and continue
+    5. Read progress doc, check for signal
 
-    ITERATION 4 (Claude - Final Verification):
-    1. Spawn sub-subagent using Task(subagent_type="general-purpose")
+    ITERATION 4 (Opus 4.5 - Final Verification):
+    1. Spawn sub-subagent using Task(subagent_type="general-purpose", model="opus")
        with the prompt from verification_subagent_prompt
     2. Wait for it to complete
     3. Read progress doc for final signal
 
     When complete, summarize: fix applied, verification results, confidence level.
 
-    ## Track B Orchestrator (Claude background, alternating models)
+    ## Track B Orchestrator (Opus background, alternating pattern)
 
     You are the Track B orchestrator for debug mode. Your job is to manage:
     - B1 (GPT 5.2): Fix iteration via Codex
-    - B2 (Claude): Fix iteration via Task
+    - B2 (Opus 4.5): Fix iteration via Task(model="opus")
     - B3 (GPT 5.2): Fix iteration via Codex
-    - B4 (GPT 5.2): Final verification via Codex
+    - B4 (Opus 4.5): Final verification via Task(model="opus")
+
+    Pattern: GPT -> Opus -> GPT -> Opus (2x Opus, 2x GPT - true alternation)
 
     Worktree: /tmp/debug-track-b
     Progress Doc: /tmp/debug-track-b-progress.md
@@ -693,8 +748,8 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
     4. If FAILED, note error and continue
     5. Read progress doc, check for signal
 
-    ITERATION 2 (Claude - Fix Attempt):
-    1. Spawn sub-subagent using Task(subagent_type="general-purpose")
+    ITERATION 2 (Opus 4.5 - Fix Attempt):
+    1. Spawn sub-subagent using Task(subagent_type="general-purpose", model="opus")
        with the prompt from meta_prompt_template
     2. Wait for it to complete
     3. Read progress doc, check for signal:
@@ -708,11 +763,11 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
     3. Poll until complete: debug-mode codex poll track-b
     4. Read progress doc, check for signal
 
-    ITERATION 4 (GPT 5.2 - Final Verification):
-    1. Write the prompt (from verification_subagent_prompt) to /tmp/debug-track-b-prompt.md
-    2. Launch codex: debug-mode codex run track-b 4 /tmp/debug-track-b-prompt.md
-    3. Poll until complete: debug-mode codex poll track-b
-    4. Read progress doc for final signal
+    ITERATION 4 (Opus 4.5 - Final Verification):
+    1. Spawn sub-subagent using Task(subagent_type="general-purpose", model="opus")
+       with the prompt from verification_subagent_prompt
+    2. Wait for it to complete
+    3. Read progress doc for final signal
 
     When complete, summarize: fix applied, verification results, confidence level.
   </track_orchestrator_prompts>
