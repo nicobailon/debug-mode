@@ -368,12 +368,14 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
 
   <context_builder_prompt>
     Use this prompt for the Context Builder (GPT 5.2 medium) - the first step in Track 0.
-    It searches the codebase to find all relevant files for debugging.
+    It searches the codebase to identify relevant files, then bundles them with repomix.
 
     ```
     ## Track 0 Step 1: Context Builder
 
-    Your task is to search the codebase and gather ALL relevant files for debugging this bug.
+    Your task is to identify all relevant files for debugging this bug, then bundle
+    them into a context file using repomix.
+
     You are running with GPT 5.2 medium reasoning.
 
     ### Bug Description
@@ -382,68 +384,68 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
     ### Project Root
     {project_root}
 
-    ### Your Task
+    ### Phase 1: SEARCH - Identify Relevant Files
 
-    1. SEARCH the codebase to find files relevant to this bug:
-       - Files likely to contain the bug
-       - Files that interact with the buggy code
-       - Test files related to the affected functionality
-       - Config files that might influence behavior
-       - Entry points and call chains
+    Use search tools to find files relevant to this bug:
 
-    2. Use your tools:
-       - Grep for error messages, function names, keywords from bug description
-       - Glob to find related files by pattern
-       - Read to examine promising files
+    1. Grep for error messages, function names, keywords from bug description
+    2. Glob to find related files by pattern (e.g., `**/*auth*.ts`)
+    3. Read files briefly to confirm relevance
 
-    3. Optional: If `npx repomix` is available, you can use it to bundle files:
-       ```bash
-       npx repomix --include "file1.ts,file2.ts" --output /tmp/debug-context.md
-       ```
+    Target files:
+    - Files likely to contain the bug
+    - Files that interact with the buggy code
+    - Test files related to the affected functionality
+    - Config files that might influence behavior
+    - Entry points and call chains
 
-    4. WRITE the context file to /tmp/debug-context.md with this format:
+    Build a list of relevant file paths as you search.
 
-       ```markdown
-       # Debug Context
+    ### Phase 2: BUNDLE - Package with repomix
 
-       ## Bug Description
-       {bug_description}
+    Once you have identified the relevant files, bundle them:
 
-       ## Relevant Files
-       | File | Lines | Relevance |
-       |------|-------|-----------|
-       | src/auth.ts | 45-120 | Main authentication logic |
-       | src/utils/token.ts | 10-50 | Token validation |
-       | tests/auth.test.ts | 100-150 | Related test cases |
+    ```bash
+    npx repomix \
+      --include "src/auth.ts,src/utils/token.ts,tests/auth.test.ts" \
+      --output /tmp/debug-context.md
+    ```
 
-       ## Key Code Snippets
+    Tips:
+    - Use comma-separated paths in --include
+    - Can use globs: --include "src/auth/**/*.ts,tests/auth*.ts"
+    - repomix will include full file contents with line numbers
 
-       ### src/auth.ts:45-80
-       ```typescript
-       // Paste the actual code here
-       ```
+    ### Phase 3: APPEND - Add Analysis Summary
 
-       ### src/utils/token.ts:10-30
-       ```typescript
-       // Paste the actual code here
-       ```
+    After repomix generates the bundle, append your analysis:
 
-       ## Context for Repro Subagent
-       Based on the code, here are observations for establishing reproduction:
-       - Entry point: {describe how the bug is triggered}
-       - Dependencies: {any external services, databases, etc.}
-       - Test commands: {existing test commands that might be relevant}
+    ```bash
+    cat >> /tmp/debug-context.md << 'EOF'
 
-       ## Context for Debug Iterations
-       Key areas to investigate:
-       - {area 1 and why}
-       - {area 2 and why}
-       - {area 3 and why}
-       ```
+    ---
 
-    IMPORTANT: Be thorough. The subsequent subagents will rely on this context
-    to debug efficiently. Include enough code snippets that they can understand
-    the flow without having to search extensively themselves.
+    ## Debug Analysis Summary
+
+    ### Bug Description
+    {bug_description}
+
+    ### Reproduction Hints
+    - Entry point: {how the bug is triggered}
+    - Dependencies: {external services, databases, etc.}
+    - Test commands: {existing test commands that might help}
+
+    ### Investigation Areas
+    1. {file:lines - what to look for and why}
+    2. {file:lines - what to look for and why}
+    3. {file:lines - what to look for and why}
+
+    EOF
+    ```
+
+    IMPORTANT: The subsequent subagents will rely on this context file.
+    Be thorough in Phase 1 - missing a relevant file means the debug
+    iterations won't have visibility into that code.
     ```
   </context_builder_prompt>
 
