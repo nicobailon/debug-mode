@@ -30,7 +30,6 @@ export async function init(args: string[]): Promise<void> {
     await createProgressDoc(
       "track-a",
       "{bug_description}",
-      "{reproduction_command}",
       [
         "{hypothesis_1}",
         "{hypothesis_2}",
@@ -43,7 +42,6 @@ export async function init(args: string[]): Promise<void> {
     await createProgressDoc(
       "track-b",
       "{bug_description}",
-      "{reproduction_command}",
       [
         "{hypothesis_1}",
         "{hypothesis_2}",

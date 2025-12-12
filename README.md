@@ -66,28 +66,38 @@ Parses the progress document and checks for READY_FOR_FIX or EARLY_EXIT signals.
 debug-mode cleanup /path/to/project
 ```
 
-Removes worktrees, kills tmux sessions, deletes temporary files, and scans for remaining `[DEBUG_AGENT]` lines.
+Removes worktrees, **archives branches** (for post-mortem analysis), deletes temporary files, and scans for remaining `[DEBUG_AGENT]` lines.
+
+Branches are renamed to `archive/debug-track-{a|b}-{timestamp}` instead of being deleted, allowing you to inspect failed debugging attempts if needed.
 
 ## Architecture
 
 ```
 Main Agent
     |
-    +-- Track A Orchestrator (background subagent)
-    |   +-- Spawns sub-subagents A1 -> A2 -> A3 ... (Claude)
-    |       Each reviews previous work via progress doc
+    +-- Track 0 (REPRO) - Claude establishes reproduction strategy
     |
-    +-- Track B Orchestrator (background subagent)
-        +-- Runs codex exec B1 -> B2 -> B3 ... (GPT 5.2)
-            Each reviews previous work via progress doc
+    +-- [After Track 0 completes]
+        |
+        +-- Track A Orchestrator (Claude background)
+        |   +-- A1 (Claude) -> A2 (GPT) -> A3 (Claude) -> A4 (Claude/verify)
+        |
+        +-- Track B Orchestrator (Claude background)
+            +-- B1 (GPT) -> B2 (Claude) -> B3 (GPT) -> B4 (GPT/verify)
 ```
 
-Two parallel debugging tracks:
-- **Track A**: Claude subagents review each other's work
-- **Track B**: GPT 5.2 (via Codex CLI) reviews each other's work
+Models alternate within each track:
+- **Track A**: Claude -> GPT -> Claude -> Claude (verify)
+- **Track B**: GPT -> Claude -> GPT -> GPT (verify)
 
-Each track maintains a progress document for continuity between iterations.
-The main agent synthesizes findings from both tracks for a high-confidence fix.
+"Fresh eyes" = different MODEL reviewing previous work, not just a new instance.
+
+Flow:
+1. Track 0 establishes reproduction strategy (AUTO/SEMI_AUTO/MANUAL)
+2. A1 (Claude) / B1 (GPT) attempt initial fix
+3. A2 (GPT) / B2 (Claude) review - if good, signal `SKIP_TO_VERIFY`
+4. A4 / B4 perform final verification
+5. Main agent synthesizes findings from both tracks
 
 ## CLI Commands
 
@@ -95,9 +105,13 @@ The main agent synthesizes findings from both tracks for a high-confidence fix.
 |---------|-------------|
 | `debug-mode init <project>` | Initialize worktrees and progress docs |
 | `debug-mode cleanup <project>` | Complete cleanup of all artifacts |
-| `debug-mode codex run <n> <prompt>` | Run Codex iteration N |
-| `debug-mode codex poll` | Check Codex session status |
+| `debug-mode codex run <track> <n> <prompt>` | Run Codex iteration N for a track |
+| `debug-mode codex poll <track>` | Check Codex session status for a track |
 | `debug-mode status <track>` | Check progress doc for signals |
+| `debug-mode diff <track>` | Show changes in a track's worktree |
+| `debug-mode apply <track> <project>` | Apply a track's fix to the project |
+
+Tracks: `track-a`, `track-b`
 
 ## Development
 

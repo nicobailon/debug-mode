@@ -1,7 +1,7 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { readFile, writeFile, chmod } from "fs/promises";
-import { PATHS, getLogFile, getOutputFile, type CodexPollResult } from "./types.js";
+import { getTrackPaths, getLogFile, getOutputFile, type Track, type CodexPollResult } from "./types.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -29,23 +29,32 @@ else
 fi
 `;
 
-async function ensureRunnerScript(): Promise<void> {
-  await writeFile(PATHS.TRACK_B_RUNNER, RUNNER_SCRIPT, { mode: 0o700 });
-  await chmod(PATHS.TRACK_B_RUNNER, 0o700);
+async function ensureRunnerScript(track: Track): Promise<void> {
+  const paths = getTrackPaths(track);
+  await writeFile(paths.runner, RUNNER_SCRIPT, { mode: 0o700 });
+  await chmod(paths.runner, 0o700);
 }
 
-export async function killSession(): Promise<boolean> {
+export async function killSession(track: Track): Promise<boolean> {
+  const paths = getTrackPaths(track);
   try {
-    await execFileAsync("tmux", ["kill-session", "-t", PATHS.TMUX_SESSION]);
+    await execFileAsync("tmux", ["kill-session", "-t", paths.tmuxSession]);
     return true;
   } catch {
     return false;
   }
 }
 
-export async function sessionExists(): Promise<boolean> {
+export async function killAllSessions(): Promise<boolean> {
+  const killedA = await killSession("track-a");
+  const killedB = await killSession("track-b");
+  return killedA || killedB;
+}
+
+export async function sessionExists(track: Track): Promise<boolean> {
+  const paths = getTrackPaths(track);
   try {
-    await execFileAsync("tmux", ["has-session", "-t", PATHS.TMUX_SESSION]);
+    await execFileAsync("tmux", ["has-session", "-t", paths.tmuxSession]);
     return true;
   } catch {
     return false;
@@ -53,6 +62,7 @@ export async function sessionExists(): Promise<boolean> {
 }
 
 export async function launchCodex(
+  track: Track,
   iteration: number,
   promptFile: string
 ): Promise<void> {
@@ -62,35 +72,37 @@ export async function launchCodex(
     throw new Error(`Prompt file not readable: ${promptFile}`);
   }
 
-  await ensureRunnerScript();
+  const paths = getTrackPaths(track);
+  await ensureRunnerScript(track);
 
-  const logFile = getLogFile(iteration);
-  const outputFile = getOutputFile(iteration);
+  const logFile = getLogFile(track, iteration);
+  const outputFile = getOutputFile(track, iteration);
 
   await execFileAsync("tmux", [
     "new-session",
     "-d",
     "-s",
-    PATHS.TMUX_SESSION,
-    PATHS.TRACK_B_RUNNER,
+    paths.tmuxSession,
+    paths.runner,
     String(iteration),
     promptFile,
-    PATHS.TRACK_B_WORKTREE,
+    paths.worktree,
     outputFile,
     logFile,
-    PATHS.TRACK_B_STATUS,
+    paths.status,
   ]);
 }
 
-export async function pollStatus(): Promise<CodexPollResult> {
-  const running = await sessionExists();
+export async function pollStatus(track: Track): Promise<CodexPollResult> {
+  const paths = getTrackPaths(track);
+  const running = await sessionExists(track);
 
   if (running) {
     return { status: "RUNNING" };
   }
 
   try {
-    const status = await readFile(PATHS.TRACK_B_STATUS, "utf-8");
+    const status = await readFile(paths.status, "utf-8");
     const trimmed = status.trim();
 
     if (trimmed === "DONE") {

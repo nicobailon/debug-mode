@@ -28,6 +28,27 @@ export async function deleteBranch(branch: string, projectRoot?: string): Promis
   }
 }
 
+export async function archiveBranch(
+  branch: string,
+  projectRoot: string
+): Promise<string | null> {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const archiveName = `archive/${branch}-${timestamp}`;
+  try {
+    await execFileAsync("git", [
+      "-C",
+      projectRoot,
+      "branch",
+      "-m",
+      branch,
+      archiveName,
+    ]);
+    return archiveName;
+  } catch {
+    return null;
+  }
+}
+
 export async function createWorktree(
   path: string,
   branch: string,

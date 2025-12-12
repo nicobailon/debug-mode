@@ -8,25 +8,29 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
   <primary_goal>Fix bugs through runtime evidence using parallel AI perspectives</primary_goal>
 
   <overview>
-    Debug Mode uses hybrid dual-track parallel debugging with symmetric architecture:
+    Debug Mode uses hybrid dual-track parallel debugging with alternating models:
 
     ```
     Main Agent
         |
-        ├── Track A Orchestrator (background subagent)
-        │   └── Spawns sub-subagents A1 -> A2 -> A3 ... (Claude)
-        │       Each reviews previous work via progress doc
-        │
-        └── Track B Orchestrator (background subagent)
-            └── Runs codex exec B1 -> B2 -> B3 ... (GPT 5.2)
-                Each reviews previous work via progress doc
+        ├── Track 0 (REPRO) - Claude establishes reproduction strategy
+        |
+        ├── [After Track 0 completes]
+        |   |
+        |   ├── Track A Orchestrator (Claude background)
+        |   │   └── A1 (Claude) -> A2 (GPT) -> A3 (Claude) -> A4 (Claude/verify)
+        |   │
+        |   └── Track B Orchestrator (Claude background)
+        |       └── B1 (GPT) -> B2 (Claude) -> B3 (GPT) -> B4 (GPT/verify)
     ```
 
-    - Both tracks run as independent background subagents
+    - Track 0 establishes reproduction strategy for both tracks
+    - Models alternate within each track (Claude/GPT/Claude or GPT/Claude/GPT)
+    - "Fresh eyes" = different MODEL, not just different instance
+    - Iterations 1-3: Each subagent proposes AND attempts a fix
+    - Iteration 4: Final verification only (no new fixes)
+    - SKIP_TO_VERIFY: If iteration 2 approves fix, skip iteration 3
     - Each track works in its own git worktree (no conflicts)
-    - Each maintains a progress document for continuity
-    - Subagents review and improve upon previous work ("fresh eyes")
-    - Main agent synthesizes findings from both tracks
   </overview>
 
   <prerequisites>
@@ -38,11 +42,15 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
   <cli_commands>
     The debug-mode CLI provides utilities for managing debug sessions:
 
-    debug-mode init <project>         Initialize worktrees and progress docs
-    debug-mode cleanup <project>      Complete cleanup of all artifacts
-    debug-mode codex run <n> <file>   Run Codex iteration N with prompt file
-    debug-mode codex poll             Check Codex session status
-    debug-mode status <track>         Check progress doc for signals
+    debug-mode init <project>                       Initialize worktrees and progress docs
+    debug-mode cleanup <project>                    Complete cleanup of all artifacts
+    debug-mode codex run <track> <n> <file>         Run Codex iteration N for a track
+    debug-mode codex poll <track>                   Check Codex session status for a track
+    debug-mode status <track>                       Check progress doc for signals
+    debug-mode diff <track>                         Show changes in a track's worktree
+    debug-mode apply <track> <project>              Apply a track's fix to the project
+
+    Tracks: track-a, track-b
   </cli_commands>
 
   <critical_rule>
@@ -90,9 +98,33 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
       Each track works in its own worktree - no conflicts possible.
     </phase>
 
-    <phase name="3. SPAWN PARALLEL TRACKS" agent="main">
-      Launch BOTH tracks as background subagents. Each subagent manages its own
-      iteration loop independently. Main agent waits for both to complete.
+    <phase name="3. REPRO ASSESSMENT (Track 0)" agent="main">
+      Before spawning debug tracks, establish a reproduction strategy.
+      This is a SINGLE subagent that runs synchronously (not in background).
+
+      ```
+      Task(
+        subagent_type="general-purpose",
+        prompt="{repro_subagent_prompt}",
+        run_in_background=false  # Wait for completion
+      )
+      ```
+
+      Track 0 determines:
+      - REPRO_MODE: AUTO (script), SEMI_AUTO (browser), or MANUAL (user triggers)
+      - If AUTO: writes debug-repro.{js|py|sh} to BOTH worktrees
+      - Updates BOTH progress docs with repro strategy
+
+      After Track 0 completes, both Track A and B will use the established
+      reproduction strategy. If Track 0 cannot establish AUTO repro, it
+      documents MANUAL mode and both tracks proceed with user-triggered repro.
+
+      See <repro_subagent_prompt> for the prompt this subagent receives.
+    </phase>
+
+    <phase name="4. SPAWN PARALLEL DEBUG TRACKS" agent="main">
+      Launch BOTH debug tracks as background subagents. Each subagent manages
+      its own iteration loop independently. Main agent waits for both to complete.
 
       Track A (Claude subagent):
       ```
@@ -112,14 +144,13 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
       )
       ```
 
-      Both subagents run independently in the background. They handle their own
-      iteration loops, polling, and progress doc updates. Main agent uses
-      TaskOutput to wait for both to complete.
+      Both tracks start with the repro strategy already established by Track 0.
+      They focus purely on debugging: instrument, reproduce, analyze.
 
       See <track_orchestrator_prompts> for the prompts each subagent receives.
     </phase>
 
-    <phase name="4. WAIT FOR COMPLETION" agent="main">
+    <phase name="5. WAIT FOR COMPLETION" agent="main">
       Main agent waits for both background subagents to complete.
       Each subagent handles its own iteration loop internally.
 
@@ -130,7 +161,7 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
       ```
 
       The subagents will:
-      - Run up to 5 iterations each
+      - Run up to 4 debug iterations each (repro already done by Track 0)
       - Spawn fresh sub-subagents for "fresh eyes" review (Track A)
       - Spawn fresh codex exec calls (Track B)
       - Update their progress docs after each iteration
@@ -139,7 +170,7 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
       Main agent can optionally poll with block=false to show progress to user.
     </phase>
 
-    <phase name="5. SYNTHESIZE" agent="main">
+    <phase name="6. SYNTHESIZE" agent="main">
       When both tracks complete:
 
       1. Read final progress docs:
@@ -158,7 +189,7 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
          - Complementary: Combine insights for comprehensive fix
     </phase>
 
-    <phase name="6. FIX" agent="main">
+    <phase name="7. FIX" agent="main">
       Apply targeted fix based on synthesized findings:
 
       - The fix MUST be justified by log evidence from at least one track
@@ -167,7 +198,7 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
       - Ask user to verify in their environment
     </phase>
 
-    <phase name="7. CLEANUP" agent="main">
+    <phase name="8. CLEANUP" agent="main">
       After user confirms fix works:
 
       1. Apply the fix to main worktree (if developed in a track worktree):
@@ -193,7 +224,8 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
   </workflow>
 
   <meta_prompt_template>
-    Use this template when spawning subagents in either track:
+    Use this template for subagents 1-3 in either track (NOT for subagent 4 - see verification_subagent_prompt).
+    These subagents iterate toward a fix: analyze, attempt fix, verify, repeat.
 
     ```
     ## Debug Track {A|B} - Subagent {N}
@@ -214,134 +246,353 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
     ### Progress Document
     Path: {/tmp/debug-track-a-progress.md or /tmp/debug-track-b-progress.md}
 
-    FIRST: Read the progress document to understand what previous subagents discovered.
+    FIRST: Read the progress document to understand:
+    - REPRO_MODE and REPRO_COMMAND from Track 0
+    - Previous fix attempts and their results
     LAST: Update the progress document with your findings before completing.
 
     ### Your Task
-    You are Subagent {N} in the chain. Review and improve upon previous work.
+    You are Subagent {N}. You are a DIFFERENT MODEL than the previous subagent.
+    Your job is to review their work with "fresh eyes" and iterate toward a fix.
 
     1. READ PROGRESS DOC
-       - What hypotheses were tested?
-       - What was confirmed/disproved?
-       - What remains inconclusive?
+       - Track 0's REPRO_MODE and REPRO_COMMAND
+       - Previous fix attempts and their results
+       - What's been confirmed/disproved
 
-    2. REVIEW previous findings
-       - Do the log interpretations make sense?
-       - Were any edge cases missed?
-       - Is more instrumentation needed?
+    2. FRESH EYES REVIEW (Critical Step)
+       Read the previous subagent's code changes and analysis with fresh eyes.
+       Look carefully for:
+       - Obvious bugs or errors in their fix
+       - Flawed assumptions or reasoning
+       - Edge cases they missed
+       - Off-by-one errors, null checks, race conditions
+       - Whether their fix actually addresses the root cause
+       - Anything that looks wrong, confusing, or suspicious
 
-    3. INSTRUMENT: Add [DEBUG_AGENT] logging if needed
+       You are a different model - use that to your advantage. Question everything.
+       Don't assume the previous fix is correct just because it was attempted.
+
+    3. ANALYZE current state
+       - If previous fix works AND passes your review → consider SKIP_TO_VERIFY
+       - If previous fix has issues → understand why, plan correction
+       - If no fix yet → identify root cause from logs/code
+
+    4. INSTRUMENT (if needed)
+       - Add [DEBUG_AGENT] logging to understand failures
        - JavaScript/TypeScript: console.log('[DEBUG_AGENT] ...')
        - Python: print('[DEBUG_AGENT] ...')
-       - Focus on gaps identified in review
+       - Skip if you have enough information to attempt fix
 
-    4. REPRODUCE: Run the reproduction command
-       - Command: {reproduction_command}
-       - Capture all [DEBUG_AGENT] output
+    5. PROPOSE FIX
+       - State your hypothesis for the root cause
+       - Describe the fix you will make
+       - Explain why this should work
 
-    5. ANALYZE: Update hypothesis status
-       - CONFIRMED | DISPROVED | INCONCLUSIVE
-       - Cite specific log evidence
+    6. ATTEMPT FIX
+       - Make the code change in your worktree
+       - Keep fixes minimal and targeted (prefer 2-3 line fixes)
+       - Do NOT remove [DEBUG_AGENT] logging
 
-    6. UPDATE PROGRESS DOC: Append your findings
+    7. VERIFY
+       - Run REPRO_COMMAND - does the bug still occur?
+       - Run tests if available - do they pass?
+       - Document the results
+
+    8. UPDATE PROGRESS DOC
        ```markdown
-       ## Iteration {N} - Subagent {N}
+       ## Iteration {N}
 
-       ### Review of Previous Work
-       {assessment}
+       ### Fresh Eyes Findings
+       {issues found in previous work, or "N/A - first iteration"}
+       - Bugs/errors spotted: {list or "None"}
+       - Flawed assumptions: {list or "None"}
+       - Edge cases missed: {list or "None"}
 
-       ### New Instrumentation Added
-       {files and log statements, or "None - previous work sufficient"}
+       ### Root Cause Analysis
+       {current understanding of the bug}
 
-       ### Reproduction Results
-       {key log output, or "Verified previous results"}
+       ### Fix Attempted
+       File: {path}
+       Change: {description of code change}
+       Rationale: {why this fixes the root cause}
 
-       ### Hypothesis Status Update
-       - Hypothesis 1: {STATUS} - {evidence}
-       - Hypothesis 2: {STATUS} - {evidence}
-       ...
+       ### Verification Results
+       REPRO_RESULT: PASS | FAIL
+       TESTS_RESULT: PASS | FAIL | N/A
 
-       ### Recommended Next Steps
+       ### Signal
        One of:
-       - {guidance for next subagent to continue investigating}
-       - "READY FOR FIX: {root_cause}" - if root cause is definitively confirmed
-       - "EARLY EXIT: {reason}" - if previous subagent's work is solid (see criteria below)
+       - SKIP_TO_VERIFY: Fix works, passed fresh eyes review, ready for verification
+       - CONTINUE: Fix failed, has issues, or incomplete
+       - NEEDS_MORE_INFO: Need more instrumentation before fixing
+
+       ### Notes for Next Subagent
+       {what to focus on if CONTINUE}
        ```
 
-    ## Early Exit Criteria (use sparingly)
-    You may declare "EARLY EXIT" ONLY if ALL of the following are true:
-    1. Previous subagent declared "READY FOR FIX" with a specific root cause
-    2. You reviewed the evidence and it is conclusive (not circumstantial)
-    3. You re-ran reproduction and confirmed the logs support the conclusion
-    4. You found NO gaps, missed edge cases, or alternative explanations
-    5. The proposed fix directly addresses the confirmed root cause
-
-    If ANY doubt exists, continue the investigation. Early exit should be RARE.
+    ## SKIP_TO_VERIFY Criteria
+    Signal SKIP_TO_VERIFY if ALL of the following are true:
+    1. Fresh eyes review found no issues with the fix
+    2. REPRO_RESULT is PASS (bug no longer reproduces)
+    3. TESTS_RESULT is PASS or N/A (no regressions)
+    4. The fix is minimal and clearly addresses root cause
+    5. You questioned the fix critically and it holds up
 
     DO NOT remove [DEBUG_AGENT] logging - main agent handles cleanup.
     ```
   </meta_prompt_template>
 
+  <repro_subagent_prompt>
+    Use this prompt for Track 0 - the single repro assessment subagent that
+    runs BEFORE both debug tracks. It establishes reproduction strategy for
+    BOTH Track A and Track B.
+
+    ```
+    ## Track 0: Repro Assessment Subagent
+
+    Your SOLE task is to establish a reproduction strategy for this bug.
+    Do NOT add instrumentation. Do NOT attempt to fix. Just establish repro.
+
+    This repro strategy will be used by BOTH Track A (Claude) and Track B (GPT 5.2).
+
+    ### Worktrees
+    - Track A: /tmp/debug-track-a
+    - Track B: /tmp/debug-track-b
+
+    ### Progress Docs
+    - Track A: /tmp/debug-track-a-progress.md
+    - Track B: /tmp/debug-track-b-progress.md
+
+    ### Bug Description
+    {bug_description}
+
+    ### Steps
+
+    1. READ the bug description and hypotheses from either progress doc
+
+    2. ASSESS reproducibility - determine which mode applies:
+       - CLI-reproducible: Can be triggered via command (npm test, curl, script)
+       - UI-dependent: Requires browser interaction (use chrome-devtools-testing)
+       - Manual-only: Requires specific user actions or timing
+
+    3. DECIDE and ACT based on assessment:
+
+       If CLI-reproducible:
+       - Write a minimal `debug-repro.{js|py|sh}` script
+       - The script should trigger the bug and exit non-zero on failure
+       - Copy the script to BOTH worktrees:
+         * /tmp/debug-track-a/debug-repro.{ext}
+         * /tmp/debug-track-b/debug-repro.{ext}
+       - Verify it fails by running it
+       - Set REPRO_MODE: AUTO
+
+       If UI-dependent but automatable:
+       - Note that chrome-devtools-testing skill should be used
+       - Document the browser actions needed
+       - Set REPRO_MODE: SEMI_AUTO
+
+       If manual-only (requires human interaction, timing, specific state):
+       - Document what the user needs to do to trigger the bug
+       - Set REPRO_MODE: MANUAL
+       - This is a valid outcome - not all bugs can be auto-reproduced
+
+    4. UPDATE BOTH progress docs with your assessment:
+
+       ## Track 0 - Repro Assessment
+
+       REPRO_MODE: AUTO | SEMI_AUTO | MANUAL
+       REPRO_SCRIPT: debug-repro.{ext} | null
+       REPRO_COMMAND: {command to run} | "User triggers manually"
+       REPRO_RATIONALE: {why this mode was chosen}
+
+       ### Assessment Notes
+       {any relevant observations about the bug's reproducibility}
+
+    IMPORTANT: Your job is ONLY to establish repro. Do not:
+    - Add [DEBUG_AGENT] instrumentation
+    - Attempt to diagnose the root cause
+    - Propose fixes
+
+    Both Track A and Track B will use your repro strategy for their debug iterations.
+    ```
+  </repro_subagent_prompt>
+
+  <verification_subagent_prompt>
+    Use this prompt for Subagent 4 (final verification) in either track.
+    This subagent does NOT propose new fixes - it only verifies the existing fix.
+
+    ```
+    ## Debug Track {A|B} - Subagent 4 (Final Verification)
+
+    ### Your Role
+    You are the FINAL VERIFICATION subagent. Your job is to rigorously verify
+    that the fix from previous subagents is correct and complete.
+
+    DO NOT propose or attempt new fixes. Only verify.
+
+    ### Your Worktree
+    Path: {/tmp/debug-track-a or /tmp/debug-track-b}
+
+    ### Progress Document
+    Path: {/tmp/debug-track-a-progress.md or /tmp/debug-track-b-progress.md}
+
+    ### Verification Steps
+
+    1. READ PROGRESS DOC
+       - Understand the fix that was applied
+       - Review the root cause analysis
+       - Note the REPRO_COMMAND from Track 0
+
+    2. FRESH EYES CODE REVIEW (Critical Step)
+       Read the fix code with completely fresh eyes. Look carefully for:
+       - Obvious bugs, errors, or typos in the fix
+       - Off-by-one errors, null pointer issues, race conditions
+       - Edge cases that could still trigger the bug
+       - Whether the fix actually addresses the root cause
+       - Any side effects or regressions the fix might introduce
+       - Anything that looks wrong, confusing, or suspicious
+
+       Be skeptical. Don't assume the fix is correct. Question everything.
+
+    3. RUN REPRODUCTION
+       - Execute REPRO_COMMAND
+       - Confirm the bug no longer occurs
+       - Document the output
+
+    4. RUN TEST SUITE (if available)
+       - Run existing tests
+       - Confirm no regressions
+       - Document results
+
+    5. CHECK EDGE CASES
+       - Test boundary conditions related to the fix
+       - Test null/empty/error cases if relevant
+       - Document any failures
+
+    6. UPDATE PROGRESS DOC
+       ```markdown
+       ## Iteration 4 - Final Verification
+
+       ### Fix Reviewed
+       {summary of the fix from previous iterations}
+
+       ### Fresh Eyes Code Review
+       - Bugs/errors spotted: {list or "None"}
+       - Edge cases missed: {list or "None"}
+       - Potential regressions: {list or "None"}
+
+       ### Verification Results
+       REPRO_RESULT: PASS | FAIL
+       TESTS_RESULT: PASS | FAIL | N/A
+       EDGE_CASES: PASS | FAIL | N/A
+
+       ### Signal
+       One of:
+       - READY_FOR_FIX: Fresh eyes review passed, all tests passed, fix is correct
+       - NEEDS_MORE_WORK: {specific issues that need addressing}
+       ```
+
+    If verification fails, clearly document WHAT failed and WHY so the main
+    agent can decide whether to continue iterating or synthesize findings.
+    ```
+  </verification_subagent_prompt>
+
   <track_orchestrator_prompts>
     These prompts are given to the background subagents that manage each track.
+    Note: Track 0 (repro assessment) has already run - reproduction strategy is established.
 
-    ## Track A Orchestrator (Claude managing Claude sub-subagents)
+    ## Track A Orchestrator (Claude background, alternating models)
 
-    You are the Track A orchestrator for debug mode. Your job is to manage a chain
-    of debugging iterations using Claude sub-subagents.
+    You are the Track A orchestrator for debug mode. Your job is to manage:
+    - A1 (Claude): Fix iteration via Task
+    - A2 (GPT 5.2): Fix iteration via Codex
+    - A3 (Claude): Fix iteration via Task
+    - A4 (Claude): Final verification via Task
 
     Worktree: /tmp/debug-track-a
     Progress Doc: /tmp/debug-track-a-progress.md
 
-    Your Task - Run up to 5 iterations of debugging:
+    IMPORTANT: Read the progress doc FIRST to see the REPRO_MODE and REPRO_COMMAND
+    established by Track 0.
 
-    1. Spawn a fresh sub-subagent using Task(subagent_type="general-purpose")
-       with the iteration prompt from meta_prompt_template
-    2. Wait for it to complete (do NOT use run_in_background for sub-subagents)
-    3. Read the updated progress doc
-    4. Check for "READY FOR FIX" or "EARLY EXIT"
-       - If found: stop iterating, report final findings
-       - If not found and iterations < 5: continue to next iteration
-    5. After all iterations, summarize findings in progress doc
+    Your Task:
 
-    Each sub-subagent gets a FRESH context for "fresh eyes" review.
-    The progress doc provides continuity between iterations.
+    ITERATION 1 (Claude - Fix Attempt):
+    1. Spawn sub-subagent using Task(subagent_type="general-purpose")
+       with the prompt from meta_prompt_template
+    2. Wait for it to complete
+    3. Read progress doc, check for signal
 
-    When complete, your final message should summarize:
-    - Which hypotheses were confirmed/disproved
-    - The identified root cause (if found)
-    - Recommended fix
+    ITERATION 2 (GPT 5.2 - Fix Attempt):
+    1. Write the prompt (from meta_prompt_template) to /tmp/debug-track-a-prompt.md
+    2. Launch codex: debug-mode codex run track-a 2 /tmp/debug-track-a-prompt.md
+    3. Poll until complete: debug-mode codex poll track-a
+    4. If FAILED, note error and continue
+    5. Read progress doc, check for signal:
+       - SKIP_TO_VERIFY: Jump to iteration 4
+       - READY_FOR_FIX: Stop, track complete
+       - CONTINUE/NEEDS_MORE_INFO: Proceed to iteration 3
 
-    ## Track B Orchestrator (Claude managing Codex/GPT 5.2)
+    ITERATION 3 (Claude - Fix Attempt):
+    1. Spawn sub-subagent using Task(subagent_type="general-purpose")
+       with the prompt from meta_prompt_template
+    2. Wait for it to complete
+    3. Read progress doc, check for signal
 
-    You are the Track B orchestrator for debug mode. Your job is to manage a chain
-    of debugging iterations using Codex CLI (GPT 5.2).
+    ITERATION 4 (Claude - Final Verification):
+    1. Spawn sub-subagent using Task(subagent_type="general-purpose")
+       with the prompt from verification_subagent_prompt
+    2. Wait for it to complete
+    3. Read progress doc for final signal
+
+    When complete, summarize: fix applied, verification results, confidence level.
+
+    ## Track B Orchestrator (Claude background, alternating models)
+
+    You are the Track B orchestrator for debug mode. Your job is to manage:
+    - B1 (GPT 5.2): Fix iteration via Codex
+    - B2 (Claude): Fix iteration via Task
+    - B3 (GPT 5.2): Fix iteration via Codex
+    - B4 (GPT 5.2): Final verification via Codex
 
     Worktree: /tmp/debug-track-b
     Progress Doc: /tmp/debug-track-b-progress.md
 
-    Your Task - Run up to 5 iterations of debugging via Codex:
+    IMPORTANT: Read the progress doc FIRST to see the REPRO_MODE and REPRO_COMMAND
+    established by Track 0.
 
-    1. Write the iteration prompt (from meta_prompt_template) to /tmp/track-b-prompt.md
-    2. Launch codex using the CLI:
-       debug-mode codex run {N} /tmp/track-b-prompt.md
-    3. Poll until complete:
-       debug-mode codex poll
-       (repeat until status is DONE or FAILED)
-    4. If status is FAILED, note the error and continue to next iteration
-    5. Check progress status:
-       debug-mode status track-b
-    6. If signal is "READY_FOR_FIX" or "EARLY_EXIT": stop iterating
-    7. If signal is "CONTINUE" and iterations < 5: continue to next iteration
-    8. After all iterations, summarize findings in progress doc
+    Your Task:
 
-    Each codex exec call is FRESH (not resumed) for "fresh eyes" review.
-    The progress doc provides continuity between iterations.
+    ITERATION 1 (GPT 5.2 - Fix Attempt):
+    1. Write the prompt (from meta_prompt_template) to /tmp/debug-track-b-prompt.md
+    2. Launch codex: debug-mode codex run track-b 1 /tmp/debug-track-b-prompt.md
+    3. Poll until complete: debug-mode codex poll track-b
+    4. If FAILED, note error and continue
+    5. Read progress doc, check for signal
 
-    When complete, your final message should summarize:
-    - Which hypotheses were confirmed/disproved
-    - The identified root cause (if found)
-    - Recommended fix
+    ITERATION 2 (Claude - Fix Attempt):
+    1. Spawn sub-subagent using Task(subagent_type="general-purpose")
+       with the prompt from meta_prompt_template
+    2. Wait for it to complete
+    3. Read progress doc, check for signal:
+       - SKIP_TO_VERIFY: Jump to iteration 4
+       - READY_FOR_FIX: Stop, track complete
+       - CONTINUE/NEEDS_MORE_INFO: Proceed to iteration 3
+
+    ITERATION 3 (GPT 5.2 - Fix Attempt):
+    1. Write the prompt (from meta_prompt_template) to /tmp/debug-track-b-prompt.md
+    2. Launch codex: debug-mode codex run track-b 3 /tmp/debug-track-b-prompt.md
+    3. Poll until complete: debug-mode codex poll track-b
+    4. Read progress doc, check for signal
+
+    ITERATION 4 (GPT 5.2 - Final Verification):
+    1. Write the prompt (from verification_subagent_prompt) to /tmp/debug-track-b-prompt.md
+    2. Launch codex: debug-mode codex run track-b 4 /tmp/debug-track-b-prompt.md
+    3. Poll until complete: debug-mode codex poll track-b
+    4. Read progress doc for final signal
+
+    When complete, summarize: fix applied, verification results, confidence level.
   </track_orchestrator_prompts>
 
   <when_to_use>
@@ -364,14 +615,33 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
   </tool_integration>
 
   <iteration_expectations>
-    Debugging complex bugs typically requires multiple iterations per track:
+    Debug mode runs: Track 0 (repro) + Track A (up to 4) + Track B (up to 4)
 
-    - 3-5 subagents per track is NORMAL for non-trivial bugs
-    - Each subagent builds on accumulated knowledge
-    - The progress doc prevents context loss between subagents
-    - Real example: "3-day manual debug became 15 mins with ~8 total iterations"
+    Model alternation per track:
+    ```
+    Track A: Claude (A1) → GPT (A2) → Claude (A3) → Claude (A4/verify)
+    Track B: GPT (B1) → Claude (B2) → GPT (B3) → GPT (B4/verify)
+    ```
 
-    Do NOT give up after 1-2 subagents. Persist until root cause is confirmed.
+    Flow with SKIP_TO_VERIFY:
+    ```
+    A1 (Claude) → A2 (GPT) approves → SKIP → A4 (Claude/verify)
+                       OR
+    A1 (Claude) → A2 (GPT) → A3 (Claude) → A4 (Claude/verify)
+    ```
+
+    Why alternate models:
+    - "Fresh eyes" = different MODEL, not just different instance
+    - GPT might catch what Claude missed (and vice versa)
+    - Each track gets both perspectives, not just one
+
+    Typical runs:
+    - Simple bug: A1 fixes it, A2 (GPT) signals SKIP_TO_VERIFY, A4 confirms = 3 iterations
+    - Complex bug: A1-A3 alternate models iterating, A4 verifies = 4 iterations
+    - Very complex: Both tracks complete, main agent synthesizes best fix
+
+    Each subagent reviews previous fix attempts and can modify/refine/revert.
+    Do NOT give up after first failed fix. Iterate until verification passes.
   </iteration_expectations>
 
   <anti_patterns>

@@ -1,7 +1,7 @@
 import { unlink, readdir } from "fs/promises";
-import { removeWorktree, deleteBranch, findDebugAgentLines } from "../lib/git.js";
-import { killSession } from "../lib/tmux.js";
-import { PATHS, getLogFile, getOutputFile, type CleanupResult } from "../lib/types.js";
+import { removeWorktree, archiveBranch, findDebugAgentLines } from "../lib/git.js";
+import { killAllSessions } from "../lib/tmux.js";
+import { PATHS, getTrackPaths, type CleanupResult } from "../lib/types.js";
 
 async function deleteFile(path: string): Promise<boolean> {
   try {
@@ -18,14 +18,14 @@ export async function cleanup(args: string[]): Promise<void> {
   const result: CleanupResult = {
     tmuxKilled: false,
     worktreesRemoved: [],
-    branchesDeleted: [],
+    branchesArchived: [],
     tempFilesDeleted: [],
     debugAgentLines: [],
   };
 
   try {
-    console.error("Killing tmux session...");
-    result.tmuxKilled = await killSession();
+    console.error("Killing tmux sessions...");
+    result.tmuxKilled = await killAllSessions();
 
     console.error("Removing worktrees...");
     if (await removeWorktree(PATHS.TRACK_A_WORKTREE, projectRoot)) {
@@ -35,30 +35,38 @@ export async function cleanup(args: string[]): Promise<void> {
       result.worktreesRemoved.push(PATHS.TRACK_B_WORKTREE);
     }
 
-    console.error("Deleting branches...");
-    if (await deleteBranch("debug-track-a", projectRoot)) {
-      result.branchesDeleted.push("debug-track-a");
+    console.error("Archiving branches...");
+    const archivedA = await archiveBranch("debug-track-a", projectRoot);
+    if (archivedA) {
+      result.branchesArchived.push(archivedA);
     }
-    if (await deleteBranch("debug-track-b", projectRoot)) {
-      result.branchesDeleted.push("debug-track-b");
+    const archivedB = await archiveBranch("debug-track-b", projectRoot);
+    if (archivedB) {
+      result.branchesArchived.push(archivedB);
     }
 
     console.error("Deleting temporary files...");
+    const trackAPaths = getTrackPaths("track-a");
+    const trackBPaths = getTrackPaths("track-b");
+
     const tempFiles: string[] = [
       PATHS.TRACK_A_PROGRESS,
       PATHS.TRACK_B_PROGRESS,
-      PATHS.TRACK_B_PROMPT,
-      PATHS.TRACK_B_STATUS,
-      PATHS.TRACK_B_RUNNER,
+      trackAPaths.prompt,
+      trackAPaths.status,
+      trackAPaths.runner,
+      trackBPaths.prompt,
+      trackBPaths.status,
+      trackBPaths.runner,
     ];
 
     try {
       const entries = await readdir("/tmp");
       for (const entry of entries) {
-        if (/^debug-track-b-iter\d+\.log$/.test(entry)) {
+        if (/^debug-track-[ab]-iter\d+\.log$/.test(entry)) {
           tempFiles.push(`/tmp/${entry}`);
         }
-        if (/^debug-track-b-iter\d+-out\.txt$/.test(entry)) {
+        if (/^debug-track-[ab]-iter\d+-out\.txt$/.test(entry)) {
           tempFiles.push(`/tmp/${entry}`);
         }
       }
