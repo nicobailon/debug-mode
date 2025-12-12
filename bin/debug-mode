@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+  DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+SKILL_DIR="$(cd -P "$(dirname "$SOURCE")/.." && pwd)"
+exec bun x tsx "$SKILL_DIR/src/cli.ts" "$@"

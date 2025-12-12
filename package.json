@@ -1,0 +1,16 @@
+{
+  "name": "debug-mode",
+  "version": "1.0.0",
+  "type": "module",
+  "bin": {
+    "debug-mode": "./bin/debug-mode"
+  },
+  "scripts": {
+    "cli": "bun x tsx src/cli.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.7.0"
+  }
+}
