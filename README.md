@@ -103,8 +103,8 @@ Flow:
 2. Context Builder searches codebase, bundles with repomix into `/tmp/debug-context.md`
 3. Repro Assessment establishes reproduction strategy (AUTO/SEMI_AUTO/MANUAL)
 4. A1 (Opus) / B1 (GPT) generate hypotheses and attempt initial fix
-5. A2/A3 resume from previous Opus agent; B2/B3 alternate models
-6. A4 (GPT) / B4 (Opus) perform final verification with fresh model
+5. A2/A3 and B2/B3 can fix + verify; if verified, signal `READY_FOR_FIX` and exit early
+6. A4 (GPT) / B4 (Opus) final verification only if not verified earlier
 7. Main agent synthesizes findings from both tracks
 
 ## Context Builder

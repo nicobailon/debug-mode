@@ -33,8 +33,8 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
     - Each iteration: Hypothesize -> Instrument -> Reproduce -> Analyze
     - "Fresh eyes" = different MODEL reviewing previous work
     - Iterations 1-3: Each subagent proposes AND attempts a fix
-    - Iteration 4: Final verification only (no new fixes)
-    - SKIP_TO_VERIFY: If iteration 2 approves fix, skip iteration 3
+    - Iteration 4: Final verification (only if not verified earlier)
+    - Early exit: A2/A3 or B2/B3 can verify and signal READY_FOR_FIX to skip remaining iterations
     - Each track works in its own git worktree (no conflicts)
   </overview>
 
@@ -696,22 +696,25 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
     2. Wait for it to complete - SAVE THE AGENT ID
     3. Read progress doc, check for signal
 
-    ITERATION 2 (Opus 4.5 - Fix Attempt, RESUME from A1):
+    ITERATION 2 (Opus 4.5 - Fix + Verify, RESUME from A1):
     1. Resume using Task(resume=<agent_id>, prompt="Continue debugging iteration 2.
-       Read the progress doc for your previous findings and iterate on the fix.")
+       Read the progress doc for your previous findings. Iterate on the fix, then
+       VERIFY if it works. If verified, signal READY_FOR_FIX.")
     2. Wait for it to complete - SAVE THE AGENT ID
     3. Read progress doc, check for signal:
-       - SKIP_TO_VERIFY: Jump to iteration 4
-       - READY_FOR_FIX: Stop, track complete
+       - READY_FOR_FIX: Track complete, exit early
        - CONTINUE/NEEDS_MORE_INFO: Proceed to iteration 3
 
-    ITERATION 3 (Opus 4.5 - Fix Attempt, RESUME from A2):
+    ITERATION 3 (Opus 4.5 - Fix + Verify, RESUME from A2):
     1. Resume using Task(resume=<agent_id>, prompt="Continue debugging iteration 3.
-       Read the progress doc for your previous findings and iterate on the fix.")
+       Read the progress doc for your previous findings. Iterate on the fix, then
+       VERIFY if it works. If verified, signal READY_FOR_FIX.")
     2. Wait for it to complete
-    3. Read progress doc, check for signal
+    3. Read progress doc, check for signal:
+       - READY_FOR_FIX: Track complete, exit early
+       - CONTINUE/NEEDS_MORE_INFO: Proceed to iteration 4
 
-    ITERATION 4 (GPT 5.2 - Final Verification):
+    ITERATION 4 (GPT 5.2 - Final Verification, only if A2/A3 didn't verify):
     1. Write the prompt (from verification_subagent_prompt) to /tmp/debug-track-a-prompt.md
     2. Launch codex: debug-mode codex run track-a 4 /tmp/debug-track-a-prompt.md
     3. Poll until complete: debug-mode codex poll track-a
@@ -748,22 +751,24 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
     4. If FAILED, note error and continue
     5. Read progress doc, check for signal
 
-    ITERATION 2 (Opus 4.5 - Fix Attempt):
+    ITERATION 2 (Opus 4.5 - Fix + Verify):
     1. Spawn sub-subagent using Task(subagent_type="general-purpose", model="opus")
-       with the prompt from meta_prompt_template
+       with prompt: meta_prompt_template + "After fixing, VERIFY if it works.
+       If verified, signal READY_FOR_FIX."
     2. Wait for it to complete
     3. Read progress doc, check for signal:
-       - SKIP_TO_VERIFY: Jump to iteration 4
-       - READY_FOR_FIX: Stop, track complete
+       - READY_FOR_FIX: Track complete, exit early
        - CONTINUE/NEEDS_MORE_INFO: Proceed to iteration 3
 
-    ITERATION 3 (GPT 5.2 - Fix Attempt):
-    1. Write the prompt (from meta_prompt_template) to /tmp/debug-track-b-prompt.md
+    ITERATION 3 (GPT 5.2 - Fix + Verify):
+    1. Write the prompt (meta_prompt_template + verify instruction) to /tmp/debug-track-b-prompt.md
     2. Launch codex: debug-mode codex run track-b 3 /tmp/debug-track-b-prompt.md
     3. Poll until complete: debug-mode codex poll track-b
-    4. Read progress doc, check for signal
+    4. Read progress doc, check for signal:
+       - READY_FOR_FIX: Track complete, exit early
+       - CONTINUE/NEEDS_MORE_INFO: Proceed to iteration 4
 
-    ITERATION 4 (Opus 4.5 - Final Verification):
+    ITERATION 4 (Opus 4.5 - Final Verification, only if B2/B3 didn't verify):
     1. Spawn sub-subagent using Task(subagent_type="general-purpose", model="opus")
        with the prompt from verification_subagent_prompt
     2. Wait for it to complete
