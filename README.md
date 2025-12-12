@@ -13,6 +13,7 @@ Inspired by [Cursor's Debug Mode](https://cursor.com/blog/debug-mode).
 - [Bun](https://bun.sh/) runtime
 - [tmux](https://github.com/tmux/tmux) terminal multiplexer
 - [Codex CLI](https://github.com/openai/codex) for GPT 5.2 track (uses OAuth login, free with ChatGPT Pro)
+- [repomix](https://github.com/yamadashy/repomix) for context bundling (`npx repomix`)
 
 ### Installation
 
@@ -58,7 +59,7 @@ debug-mode status track-a
 debug-mode status track-b
 ```
 
-Parses the progress document and checks for READY_FOR_FIX or EARLY_EXIT signals.
+Parses the progress document for signals (CONTINUE, SKIP_TO_VERIFY, READY_FOR_FIX, NEEDS_MORE_WORK).
 
 ### Cleanup after debugging
 
@@ -103,6 +104,53 @@ Flow:
 4. A2 (GPT) / B2 (Claude) review - if good, signal `SKIP_TO_VERIFY`
 5. A4 / B4 perform final verification
 6. Main agent synthesizes findings from both tracks
+
+## Context Builder
+
+The Context Builder (Track 0, Step 1) uses a 3-phase workflow:
+
+1. **SEARCH** - Use Grep/Glob to identify files relevant to the bug
+2. **BUNDLE** - Package files with repomix:
+   ```bash
+   npx repomix --include "src/auth.ts,src/utils/*.ts" --output /tmp/debug-context.md
+   ```
+3. **APPEND** - Add analysis summary with reproduction hints and investigation areas
+
+The bundled context file provides all subsequent subagents with full file contents and line numbers.
+
+## Repro Modes
+
+Track 0, Step 2 determines how the bug can be reproduced:
+
+| Mode | Description |
+|------|-------------|
+| `AUTO` | Script-triggered (e.g., `npm test`, `./debug-repro.sh`). Exits non-zero on failure. |
+| `SEMI_AUTO` | Browser-based. Uses chrome-devtools-testing skill for automation. |
+| `MANUAL` | User-triggered. Documents steps for manual reproduction. |
+
+## Signals
+
+Subagents communicate status via signals in the progress document:
+
+| Signal | Meaning |
+|--------|---------|
+| `CONTINUE` | Fix failed or incomplete, continue iterating |
+| `SKIP_TO_VERIFY` | Fix works, skip to final verification (iteration 4) |
+| `READY_FOR_FIX` | Final verification passed, fix is ready |
+| `NEEDS_MORE_WORK` | Verification failed, specific issues documented |
+
+## File Paths
+
+All debug artifacts are stored in `/tmp`:
+
+| Artifact | Path |
+|----------|------|
+| Track A worktree | `/tmp/debug-track-a` |
+| Track B worktree | `/tmp/debug-track-b` |
+| Track A progress | `/tmp/debug-track-a-progress.md` |
+| Track B progress | `/tmp/debug-track-b-progress.md` |
+| Context file | `/tmp/debug-context.md` |
+| Track prompts | `/tmp/debug-track-{a,b}-prompt.md` |
 
 ## CLI Commands
 
