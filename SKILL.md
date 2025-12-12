@@ -361,6 +361,26 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
 
     You are running with GPT 5.2 medium reasoning.
 
+    ### QUICK REFERENCE: repomix Usage
+
+    Bundle files into /tmp/debug-context.md using these patterns:
+
+    ```bash
+    # Single files (comma-separated)
+    npx repomix --include "src/auth.ts,src/utils/token.ts" --output /tmp/debug-context.md
+
+    # Glob patterns
+    npx repomix --include "src/auth/**/*.ts" --output /tmp/debug-context.md
+
+    # Multiple globs
+    npx repomix --include "src/auth/**/*.ts,tests/auth*.ts" --output /tmp/debug-context.md
+
+    # With exclusions
+    npx repomix --include "src/**/*.ts" --exclude "**/*.test.ts,**/node_modules/**" --output /tmp/debug-context.md
+    ```
+
+    Output MUST go to: /tmp/debug-context.md
+
     ### Bug Description
     {bug_description}
 

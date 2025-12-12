@@ -101,6 +101,7 @@ export async function findDebugAgentLines(projectRoot: string): Promise<string[]
       "--include=*.py",
       "--include=*.go",
       "--include=*.java",
+      "--exclude=**/cleanup.ts",
     ]);
     return stdout.trim().split("\n").filter(Boolean);
   } catch {
