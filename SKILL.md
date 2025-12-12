@@ -254,6 +254,14 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
     You are Subagent {N}. You are a DIFFERENT MODEL than the previous subagent.
     Your job is to review their work with "fresh eyes" and iterate toward a fix.
 
+    ### Behavior Constraints (GPT 5.2)
+    - Implement EXACTLY what is needed to fix the bug - nothing more
+    - Do NOT refactor unrelated code or add "improvements"
+    - Do NOT add extra error handling, logging, or features beyond the fix
+    - Keep fixes minimal: prefer 2-3 line changes over large refactors
+    - Use PARALLEL tool calls when reading multiple files
+    - Progress updates: 1-2 sentences at major steps only
+
     Follow this flow: HYPOTHESIZE -> INSTRUMENT -> REPRODUCE -> ANALYZE
 
     1. READ CONTEXT AND PROGRESS DOC
@@ -360,6 +368,12 @@ description: Hypothesis-driven debugging with hybrid dual-track parallel executi
     them into a context file using repomix.
 
     You are running with GPT 5.2 medium reasoning.
+
+    ### Behavior Constraints
+    - Use PARALLEL tool calls when searching (grep multiple patterns simultaneously)
+    - Be CONCISE - no narration of routine operations
+    - Output only what's needed: file list, repomix command, brief analysis
+    - Do NOT expand scope beyond finding relevant files
 
     ### QUICK REFERENCE: repomix Usage
 
